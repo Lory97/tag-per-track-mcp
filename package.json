@@ -1,0 +1,36 @@
+{
+  "name": "tag-per-track-mcp",
+  "version": "1.0.0",
+  "description": "MCP Server for Tag-per-Track audio analysis with x402 payments",
+  "main": "build/index.js",
+  "type": "module",
+  "bin": {
+    "tag-per-track-mcp": "./build/index.js"
+  },
+  "files": [
+    "build"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node ./build/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "mcp",
+    "x402",
+    "audio"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^17.4.2",
+    "viem": "^2.48.4",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  }
+}
