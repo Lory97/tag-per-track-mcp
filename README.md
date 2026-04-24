@@ -39,6 +39,7 @@ Add the following configuration to your `claude_desktop_config.json` file:
 
 > [!IMPORTANT]
 > Ensure your wallet has sufficient **USDC** on the **Base** network.
+> ⚠️ SECURITY ADVICE: Never use your main vault wallet. Please use a dedicated "burner" wallet or a developer wallet funded with a small amount of ETH (for Base gas fees) and a few USDC. The private key remains strictly on your local machine and is never transmitted to our servers.
 
 ## 🔧 MCP Tool: `analyze_audio`
 
