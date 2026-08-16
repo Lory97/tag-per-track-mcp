@@ -39,7 +39,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "analyze_audio",
-        description: "Analyzes a music track or audio file to extract advanced metadata like BPM, genre, mood, and key. Provide the URL of the audio file (.mp3, .wav, .ogg). Note: This tool automatically executes a micro-payment (0.05 USDC) via the x402 protocol.",
+        description: "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments) and optionally vocal lyrics. Note: This tool automatically executes a micro-payment (0.05 USDC for standard analysis, or 0.10 USDC when extractLyrics is enabled) via the x402 protocol on Base.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            fileUrl: {
+              type: "string",
+              description: "The direct URL of the audio file to analyze (supports mp3, wav, ogg, flac)."
+            },
+            extractLyrics: {
+              type: "boolean",
+              description: "Optional: Set to true to transcribe and extract song lyrics in addition to metadata. Costs 0.10 USDC instead of 0.05 USDC."
+            }
+          },
+          required: ["fileUrl"]
+        }
+      },
+      {
+        name: "analyze_audio_with_lyrics",
+        description: "Analyzes an audio track to extract complete musical metadata AND transcribe full vocal lyrics using AI. Note: This tool automatically executes a micro-payment of 0.10 USDC via the x402 protocol on Base.",
         inputSchema: {
           type: "object",
           properties: {
@@ -56,14 +74,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (request.params.name !== "analyze_audio") {
-    throw new Error(`Unknown tool: ${request.params.name}`);
+  const toolName = request.params.name;
+
+  if (toolName !== "analyze_audio" && toolName !== "analyze_audio_with_lyrics") {
+    throw new Error(`Unknown tool: ${toolName}`);
   }
 
-  const { fileUrl } = request.params.arguments as { fileUrl: string };
+  const { fileUrl, extractLyrics } = (request.params.arguments || {}) as {
+    fileUrl: string;
+    extractLyrics?: boolean;
+  };
+
+  if (!fileUrl) {
+    throw new Error("Missing required argument: fileUrl");
+  }
+
+  const shouldExtractLyrics = toolName === "analyze_audio_with_lyrics" || Boolean(extractLyrics);
 
   try {
-    const data = await analyzeAudio(fileUrl, privateKey, API_URL);
+    const data = await analyzeAudio(fileUrl, privateKey, API_URL, shouldExtractLyrics);
     return {
       content: [
         {

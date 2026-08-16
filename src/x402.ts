@@ -6,16 +6,27 @@ import { type Hex } from "viem";
  * 
  * @param fileUrl The URL of the audio file to analyze.
  * @param privateKey Hex string representing the private key.
- * @param apiUrl The Tag-per-Track API URL.
+ * @param apiUrl The Tag-per-Track API base URL.
+ * @param extractLyrics Whether to extract vocal lyrics in addition to metadata.
  * @returns The analysis result JSON.
  */
-export async function analyzeAudio(fileUrl: string, privateKey: string, apiUrl: string): Promise<any> {
+export async function analyzeAudio(
+    fileUrl: string,
+    privateKey: string,
+    apiUrl: string,
+    extractLyrics: boolean = false
+): Promise<any> {
     const account = privateKeyToAccount(privateKey as Hex);
 
-    console.error(`[Tag-per-Track MCP] Starting analysis for: ${fileUrl}`);
+    const targetUrl = extractLyrics
+        ? (apiUrl.endsWith('/analyze') ? `${apiUrl}-with-lyrics` : `${apiUrl.replace(/\/analyze$/, '')}/analyze-with-lyrics`)
+        : apiUrl;
+
+    console.error(`[Tag-per-Track MCP] Starting analysis for: ${fileUrl} (extractLyrics: ${extractLyrics})`);
+    console.error(`[Tag-per-Track MCP] Target endpoint: ${targetUrl}`);
 
     // 1. Initial Request (Triggers 402 Payment Required)
-    const initialResponse = await fetch(apiUrl, {
+    const initialResponse = await fetch(targetUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileUrl })
@@ -120,17 +131,19 @@ export async function analyzeAudio(fileUrl: string, privateKey: string, apiUrl: 
             },
         },
         resource: requirements.resource || {
-            url: apiUrl,
-            description: 'Tag-per-Track: Agentic-First Musical Audio Analysis API. Extracts BPM, Key, Mood, Genres and Instruments from audio URLs.',
+            url: targetUrl,
+            description: extractLyrics
+                ? 'Tag-per-Track: Agentic-First Musical Audio Analysis API. Extracts BPM, Key, Mood, Genres, Instruments AND Lyrics from audio URLs.'
+                : 'Tag-per-Track: Agentic-First Musical Audio Analysis API. Extracts BPM, Key, Mood, Genres and Instruments from audio URLs.',
             mimeType: 'application/json',
         },
         extensions: requirements.extensions
     });
 
-    console.error(`[Tag-per-Track MCP] Proof generated and signed. Re-submitting request...`);
+    console.error(`[Tag-per-Track MCP] Proof generated and signed. Re-submitting request to ${targetUrl}...`);
 
     // 6. Secondary Call with PAYMENT-SIGNATURE header
-    const finalResponse = await fetch(apiUrl, {
+    const finalResponse = await fetch(targetUrl, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
