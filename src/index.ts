@@ -9,7 +9,7 @@ import {
 import * as dotenv from 'dotenv';
 import { analyzeAudio } from './x402.js';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 // Parse private key from arguments
 // E.g. `npx tag-per-track-mcp 0x...` or `tag-per-track-mcp 0x...`
