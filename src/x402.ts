@@ -1,35 +1,140 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { fileURLToPath } from 'url';
 import { privateKeyToAccount } from "viem/accounts";
 import { type Hex } from "viem";
 
+export interface AudioInput {
+    fileUrl?: string;
+    filePath?: string;
+}
+
+const MAX_LOCAL_FILE_SIZE = 50 * 1024 * 1024; // 50 MB limit
+
+/**
+ * Resolves a local path, expanding '~', file:// URLs, and relative paths.
+ */
+export function resolveLocalPath(filePath: string): string {
+    if (filePath.startsWith('file://')) {
+        try {
+            return fileURLToPath(filePath);
+        } catch {
+            return filePath.replace(/^file:\/\//, '');
+        }
+    }
+    if (filePath.startsWith('~')) {
+        return path.resolve(os.homedir(), filePath.slice(1).replace(/^[/\\]/, ''));
+    }
+    return path.resolve(process.cwd(), filePath);
+}
+
+/**
+ * Maps common audio file extensions to their standard MIME type.
+ */
+export function getAudioMimeType(filename: string): string {
+    const ext = path.extname(filename).toLowerCase();
+    switch (ext) {
+        case '.mp3':
+            return 'audio/mpeg';
+        case '.wav':
+            return 'audio/wav';
+        case '.ogg':
+            return 'audio/ogg';
+        case '.flac':
+            return 'audio/flac';
+        case '.m4a':
+            return 'audio/mp4';
+        case '.aac':
+            return 'audio/aac';
+        case '.aiff':
+        case '.aif':
+            return 'audio/aiff';
+        default:
+            return 'application/octet-stream';
+    }
+}
+
 /**
  * Executes a micro-payment via the x402 protocol and analyzes an audio file.
+ * Supports both remote URLs (fileUrl) and local binary files (filePath).
  * 
- * @param fileUrl The URL of the audio file to analyze.
+ * @param input Either a fileUrl/filePath string or an object with fileUrl or filePath.
  * @param privateKey Hex string representing the private key.
  * @param apiUrl The Tag-per-Track API base URL.
  * @param extractLyrics Whether to extract vocal lyrics in addition to metadata.
  * @returns The analysis result JSON.
  */
 export async function analyzeAudio(
-    fileUrl: string,
+    input: string | AudioInput,
     privateKey: string,
     apiUrl: string,
     extractLyrics: boolean = false
 ): Promise<any> {
     const account = privateKeyToAccount(privateKey as Hex);
 
+    // Resolve input parameters
+    let fileUrl: string | undefined;
+    let filePath: string | undefined;
+
+    if (typeof input === 'string') {
+        if (input.startsWith('file://') || fs.existsSync(input)) {
+            filePath = input;
+        } else {
+            fileUrl = input;
+        }
+    } else {
+        filePath = input.filePath;
+        fileUrl = input.fileUrl;
+    }
+
+    // Auto-detect if fileUrl is actually a local file or file:// URL
+    if (!filePath && fileUrl && (fileUrl.startsWith('file://') || fs.existsSync(fileUrl))) {
+        filePath = fileUrl;
+        fileUrl = undefined;
+    }
+
+    if (!filePath && !fileUrl) {
+        throw new Error("Missing audio source: either 'filePath' (local file) or 'fileUrl' (remote URL) must be provided.");
+    }
+
+    let localFileData: { buffer: Buffer; filename: string; mimeType: string } | undefined;
+
+    if (filePath) {
+        const resolvedPath = resolveLocalPath(filePath);
+        if (!fs.existsSync(resolvedPath)) {
+            throw new Error(`Local file not found: ${filePath} (resolved path: ${resolvedPath})`);
+        }
+        const stat = await fs.promises.stat(resolvedPath);
+        if (!stat.isFile()) {
+            throw new Error(`The provided path is not a file: ${filePath}`);
+        }
+        if (stat.size > MAX_LOCAL_FILE_SIZE) {
+            throw new Error(`File is too large (${(stat.size / 1024 / 1024).toFixed(2)} MB). Maximum allowed size is 50MB.`);
+        }
+        const buffer = await fs.promises.readFile(resolvedPath);
+        const filename = path.basename(resolvedPath);
+        const mimeType = getAudioMimeType(filename);
+        localFileData = { buffer, filename, mimeType };
+    }
+
     const targetUrl = extractLyrics
         ? (apiUrl.endsWith('/analyze') ? `${apiUrl}-with-lyrics` : `${apiUrl.replace(/\/analyze$/, '')}/analyze-with-lyrics`)
         : apiUrl;
 
-    console.error(`[Tag-per-Track MCP] Starting analysis for: ${fileUrl} (extractLyrics: ${extractLyrics})`);
+    const sourceDescription = localFileData
+        ? `local file: ${localFileData.filename} (${(localFileData.buffer.length / 1024 / 1024).toFixed(2)} MB)`
+        : `remote URL: ${fileUrl}`;
+
+    console.error(`[Tag-per-Track MCP] Starting analysis for ${sourceDescription} (extractLyrics: ${extractLyrics})`);
     console.error(`[Tag-per-Track MCP] Target endpoint: ${targetUrl}`);
 
     // 1. Initial Request (Triggers 402 Payment Required)
+    const triggerBody = fileUrl ? { fileUrl } : { fileName: localFileData?.filename };
     const initialResponse = await fetch(targetUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileUrl })
+        body: JSON.stringify(triggerBody)
     });
 
     if (initialResponse.status === 400) {
@@ -133,8 +238,8 @@ export async function analyzeAudio(
         resource: requirements.resource || {
             url: targetUrl,
             description: extractLyrics
-                ? 'Tag-per-Track: Agentic-First Musical Audio Analysis API. Extracts BPM, Key, Mood, Genres, Instruments AND Lyrics from audio URLs.'
-                : 'Tag-per-Track: Agentic-First Musical Audio Analysis API. Extracts BPM, Key, Mood, Genres and Instruments from audio URLs.',
+                ? 'Tag-per-Track: Agentic-First Musical Audio Analysis API. Extracts BPM, Key, Mood, Genres, Instruments AND Lyrics from audio.'
+                : 'Tag-per-Track: Agentic-First Musical Audio Analysis API. Extracts BPM, Key, Mood, Genres and Instruments from audio.',
             mimeType: 'application/json',
         },
         extensions: requirements.extensions
@@ -143,14 +248,26 @@ export async function analyzeAudio(
     console.error(`[Tag-per-Track MCP] Proof generated and signed. Re-submitting request to ${targetUrl}...`);
 
     // 6. Secondary Call with PAYMENT-SIGNATURE header
+    const headers: Record<string, string> = {
+        'PAYMENT-SIGNATURE': paymentProof,
+        'X-Payment-Proof': paymentProof // Kept for backwards compatibility
+    };
+
+    let body: BodyInit;
+    if (localFileData) {
+        const formData = new FormData();
+        const blob = new Blob([new Uint8Array(localFileData.buffer)], { type: localFileData.mimeType });
+        formData.append('file', blob, localFileData.filename);
+        body = formData;
+    } else {
+        headers['Content-Type'] = 'application/json';
+        body = JSON.stringify({ fileUrl });
+    }
+
     const finalResponse = await fetch(targetUrl, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'PAYMENT-SIGNATURE': paymentProof,
-            'X-Payment-Proof': paymentProof // Kept for backwards compatibility
-        },
-        body: JSON.stringify({ fileUrl })
+        headers,
+        body
     });
 
     if (!finalResponse.ok) {

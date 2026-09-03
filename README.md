@@ -45,17 +45,21 @@ Add the following configuration to your `claude_desktop_config.json` file:
 ## 🔧 MCP Tools
 
 ### 1. `analyze_audio`
-Analyzes an audio file to extract musical metadata tags (BPM, key, scale, moods, genres, instruments) and optional lyrics.
+Analyzes an audio file to extract musical metadata tags (BPM, key, scale, moods, genres, instruments) and optional lyrics. Supports both local binary files and remote URLs.
 
 - **Arguments**:
-  - `fileUrl` (*string*, required): Direct URL of the audio file (.mp3, .wav, .ogg, .flac).
+  - `filePath` (*string*, optional): Path to a local audio file on disk (.mp3, .wav, .ogg, .flac). The server reads the file in binary and uploads it directly.
+  - `fileUrl` (*string*, optional): Direct URL of the audio file (.mp3, .wav, .ogg, .flac).
+  *(Note: At least one of `filePath` or `fileUrl` must be provided).*
   - `extractLyrics` (*boolean*, optional): Set to `true` to also extract vocal lyrics (costs 0.10 USDC instead of 0.05 USDC).
 
 ### 2. `analyze_audio_with_lyrics`
-Analyzes an audio file to extract musical metadata AND transcribe full vocal lyrics using AI.
+Analyzes an audio file to extract musical metadata AND transcribe full vocal lyrics using AI. Supports both local binary files and remote URLs.
 
 - **Arguments**:
-  - `fileUrl` (*string*, required): Direct URL of the audio file (.mp3, .wav, .ogg, .flac).
+  - `filePath` (*string*, optional): Path to a local audio file on disk (.mp3, .wav, .ogg, .flac). The server reads the file in binary and uploads it directly.
+  - `fileUrl` (*string*, optional): Direct URL of the audio file (.mp3, .wav, .ogg, .flac).
+  *(Note: At least one of `filePath` or `fileUrl` must be provided).*
 
 ## 📄 License
 MIT

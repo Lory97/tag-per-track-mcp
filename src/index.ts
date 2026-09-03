@@ -39,34 +39,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "analyze_audio",
-        description: "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments) and optionally vocal lyrics. Note: This tool automatically executes a micro-payment (0.05 USDC for standard analysis, or 0.10 USDC when extractLyrics is enabled) via the x402 protocol on Base.",
+        description: "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments) and optionally vocal lyrics. Supports local audio files (read in binary and uploaded) or remote URLs. Note: This tool automatically executes a micro-payment (0.05 USDC for standard analysis, or 0.10 USDC when extractLyrics is enabled) via the x402 protocol on Base.",
         inputSchema: {
           type: "object",
           properties: {
+            filePath: {
+              type: "string",
+              description: "Path to a local audio file on disk (.mp3, .wav, .ogg, .flac). The file will be read in binary and uploaded directly."
+            },
             fileUrl: {
               type: "string",
-              description: "The direct URL of the audio file to analyze (supports mp3, wav, ogg, flac)."
+              description: "The direct URL of the audio file to analyze (supports http/https, mp3, wav, ogg, flac)."
             },
             extractLyrics: {
               type: "boolean",
               description: "Optional: Set to true to transcribe and extract song lyrics in addition to metadata. Costs 0.10 USDC instead of 0.05 USDC."
             }
-          },
-          required: ["fileUrl"]
+          }
         }
       },
       {
         name: "analyze_audio_with_lyrics",
-        description: "Analyzes an audio track to extract complete musical metadata AND transcribe full vocal lyrics using AI. Note: This tool automatically executes a micro-payment of 0.10 USDC via the x402 protocol on Base.",
+        description: "Analyzes an audio track to extract complete musical metadata AND transcribe full vocal lyrics using AI. Supports local audio files (read in binary and uploaded) or remote URLs. Note: This tool automatically executes a micro-payment of 0.10 USDC via the x402 protocol on Base.",
         inputSchema: {
           type: "object",
           properties: {
+            filePath: {
+              type: "string",
+              description: "Path to a local audio file on disk (.mp3, .wav, .ogg, .flac). The file will be read in binary and uploaded directly."
+            },
             fileUrl: {
               type: "string",
-              description: "The direct URL of the audio file to analyze (supports mp3, wav, ogg, flac)."
+              description: "The direct URL of the audio file to analyze (supports http/https, mp3, wav, ogg, flac)."
             }
-          },
-          required: ["fileUrl"]
+          }
         }
       }
     ]
@@ -80,19 +86,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     throw new Error(`Unknown tool: ${toolName}`);
   }
 
-  const { fileUrl, extractLyrics } = (request.params.arguments || {}) as {
-    fileUrl: string;
+  const { filePath, fileUrl, extractLyrics } = (request.params.arguments || {}) as {
+    filePath?: string;
+    fileUrl?: string;
     extractLyrics?: boolean;
   };
 
-  if (!fileUrl) {
-    throw new Error("Missing required argument: fileUrl");
+  if (!filePath && !fileUrl) {
+    throw new Error("Missing required argument: either 'filePath' (local audio file path) or 'fileUrl' (remote URL) must be provided.");
   }
 
   const shouldExtractLyrics = toolName === "analyze_audio_with_lyrics" || Boolean(extractLyrics);
 
   try {
-    const data = await analyzeAudio(fileUrl, privateKey, API_URL, shouldExtractLyrics);
+    const data = await analyzeAudio({ filePath, fileUrl }, privateKey, API_URL, shouldExtractLyrics);
     return {
       content: [
         {
