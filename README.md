@@ -30,7 +30,7 @@ Add the following configuration to your `claude_desktop_config.json` file:
       "command": "npx",
       "args": [
         "-y",
-        "tag-per-track-mcp",
+        "tag-per-track-mcp@latest",
         "0xYOUR_PRIVATE_KEY_HERE"
       ]
     }

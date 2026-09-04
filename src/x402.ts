@@ -30,6 +30,22 @@ export function resolveLocalPath(filePath: string): string {
 }
 
 /**
+ * Detects if a string is intended as a local file path rather than a remote URL.
+ */
+export function isLikelyLocalPath(str: string): boolean {
+    if (!str || typeof str !== 'string') return false;
+    const trimmed = str.trim();
+    return (
+        trimmed.startsWith('file://') ||
+        trimmed.startsWith('~') ||
+        trimmed.startsWith('/') ||
+        trimmed.startsWith('./') ||
+        trimmed.startsWith('../') ||
+        /^[a-zA-Z]:[\\/]/.test(trimmed)
+    );
+}
+
+/**
  * Maps common audio file extensions to their standard MIME type.
  */
 export function getAudioMimeType(filename: string): string {
@@ -78,24 +94,42 @@ export async function analyzeAudio(
     let filePath: string | undefined;
 
     if (typeof input === 'string') {
-        if (input.startsWith('file://') || fs.existsSync(input)) {
-            filePath = input;
+        const trimmed = input.trim();
+        if (isLikelyLocalPath(trimmed)) {
+            filePath = trimmed;
         } else {
-            fileUrl = input;
+            fileUrl = trimmed;
         }
     } else {
-        filePath = input.filePath;
-        fileUrl = input.fileUrl;
+        filePath = input.filePath ? input.filePath.trim() : undefined;
+        fileUrl = input.fileUrl ? input.fileUrl.trim() : undefined;
     }
 
-    // Auto-detect if fileUrl is actually a local file or file:// URL
-    if (!filePath && fileUrl && (fileUrl.startsWith('file://') || fs.existsSync(fileUrl))) {
-        filePath = fileUrl;
+    // If both are provided, prioritize the local file
+    if (filePath && fileUrl) {
+        console.error(`[Tag-per-Track MCP] Both 'filePath' and 'fileUrl' provided. Prioritizing local file: "${filePath}".`);
         fileUrl = undefined;
     }
 
+    // Auto-detect if fileUrl is actually a local file or file:// URL
+    if (!filePath && fileUrl) {
+        if (isLikelyLocalPath(fileUrl)) {
+            const potentialLocalPath = resolveLocalPath(fileUrl);
+            if (fs.existsSync(potentialLocalPath)) {
+                console.error(`[Tag-per-Track MCP] Detected local file in 'fileUrl' ("${fileUrl}"). Auto-converting to local upload.`);
+                filePath = potentialLocalPath;
+                fileUrl = undefined;
+            } else {
+                throw new Error(
+                    `Invalid fileUrl "${fileUrl}": local or relative filesystem paths cannot be fetched by the remote server. ` +
+                    `The file was also not found locally at "${potentialLocalPath}". Please provide an existing local file via 'filePath' or a valid public HTTP/IPFS URL via 'fileUrl'.`
+                );
+            }
+        }
+    }
+
     if (!filePath && !fileUrl) {
-        throw new Error("Missing audio source: either 'filePath' (local file) or 'fileUrl' (remote URL) must be provided.");
+        throw new Error("Missing audio source: Please provide either 'filePath' (for a local audio file on disk) or 'fileUrl' (for a public HTTP/HTTPS or IPFS URL).");
     }
 
     let localFileData: { buffer: Buffer; filename: string; mimeType: string } | undefined;
@@ -103,11 +137,11 @@ export async function analyzeAudio(
     if (filePath) {
         const resolvedPath = resolveLocalPath(filePath);
         if (!fs.existsSync(resolvedPath)) {
-            throw new Error(`Local file not found: ${filePath} (resolved path: ${resolvedPath})`);
+            throw new Error(`Local file not found: "${filePath}" (resolved path: "${resolvedPath}"). Please verify the path.`);
         }
         const stat = await fs.promises.stat(resolvedPath);
         if (!stat.isFile()) {
-            throw new Error(`The provided path is not a file: ${filePath}`);
+            throw new Error(`The provided path is not a regular file: "${filePath}"`);
         }
         if (stat.size > MAX_LOCAL_FILE_SIZE) {
             throw new Error(`File is too large (${(stat.size / 1024 / 1024).toFixed(2)} MB). Maximum allowed size is 50MB.`);
