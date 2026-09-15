@@ -6,10 +6,22 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import * as fs from 'fs';
+import { fileURLToPath } from 'url';
 import * as dotenv from 'dotenv';
 import { analyzeAudio } from './x402.js';
 
 dotenv.config({ quiet: true });
+
+// Read package version dynamically from package.json with fallback
+let packageVersion = "1.2.2";
+try {
+  const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+  if (pkg.version) packageVersion = pkg.version;
+} catch {
+  // fallback to 1.2.2
+}
 
 // 1. Resolve & Validate Private Key
 // Priority: environment variable PRIVATE_KEY (recommended) -> CLI argument (fallback)
@@ -47,7 +59,7 @@ const API_URL = process.env.API_URL || "https://api.tag-per-track.cloud/api/anal
 const server = new Server(
   {
     name: "tag-per-track-mcp",
-    version: "1.2.1",
+    version: packageVersion,
   },
   {
     capabilities: {
@@ -159,7 +171,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[Tag-per-Track MCP] Server started on stdio (v1.2.1)");
+  console.error(`[Tag-per-Track MCP] Server started on stdio (v${packageVersion})`);
 }
 
 main().catch(error => {
