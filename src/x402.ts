@@ -10,7 +10,75 @@ export interface AudioInput {
     filePath?: string;
 }
 
+export interface X402PaymentAccept {
+    network: string;
+    asset: string;
+    payTo: string;
+    amount?: string;
+    maxAmountRequired?: string;
+    extra?: {
+        name?: string;
+        version?: string;
+        [key: string]: any;
+    };
+    [key: string]: any;
+}
+
+export interface X402Requirements {
+    x402Version?: number;
+    accepts?: X402PaymentAccept[];
+    network?: string;
+    asset?: string;
+    payTo?: string;
+    amount?: string;
+    maxAmountRequired?: string;
+    resource?: any;
+    extensions?: any;
+    extra?: any;
+}
+
+export interface AudioAnalysisResult {
+    bpm?: number;
+    key?: string;
+    scale?: string;
+    genres?: Array<{ label: string; score: number }> | string[];
+    moods?: Array<{ label: string; score: number }> | string[];
+    instruments?: Array<{ label: string; score: number }> | string[];
+    lyrics?: string;
+    [key: string]: any;
+}
+
 const MAX_LOCAL_FILE_SIZE = 50 * 1024 * 1024; // 50 MB limit
+
+// Default max spending limit: 0.20 USDC (USDC uses 6 decimals on Base: 200,000 units = 0.20 USDC)
+const DEFAULT_MAX_SPENDING_USDC = 200_000n;
+
+// EIP-3009 authorization valid for 5 minutes (300 seconds) instead of 1 hour
+const EIP3009_VALIDITY_SECONDS = 300;
+
+export const SUPPORTED_AUDIO_MIME_TYPES: Record<string, string> = {
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.flac': 'audio/flac',
+    '.m4a': 'audio/mp4',
+    '.aac': 'audio/aac',
+    '.aiff': 'audio/aiff',
+    '.aif': 'audio/aiff',
+};
+
+/**
+ * Reads the configured maximum spending limit or defaults to 0.20 USDC.
+ */
+export function getMaxSpendingCap(): bigint {
+    if (process.env.MAX_SPENDING_USDC) {
+        const parsed = parseFloat(process.env.MAX_SPENDING_USDC);
+        if (!isNaN(parsed) && parsed > 0) {
+            return BigInt(Math.round(parsed * 1_000_000));
+        }
+    }
+    return DEFAULT_MAX_SPENDING_USDC;
+}
 
 /**
  * Resolves a local path, expanding '~', file:// URLs, and relative paths.
@@ -46,29 +114,35 @@ export function isLikelyLocalPath(str: string): boolean {
 }
 
 /**
- * Maps common audio file extensions to their standard MIME type.
+ * Validates audio file extension against strict whitelist and returns its MIME type.
+ * Rejects non-audio files immediately to prevent arbitrary file exfiltration.
  */
 export function getAudioMimeType(filename: string): string {
     const ext = path.extname(filename).toLowerCase();
-    switch (ext) {
-        case '.mp3':
-            return 'audio/mpeg';
-        case '.wav':
-            return 'audio/wav';
-        case '.ogg':
-            return 'audio/ogg';
-        case '.flac':
-            return 'audio/flac';
-        case '.m4a':
-            return 'audio/mp4';
-        case '.aac':
-            return 'audio/aac';
-        case '.aiff':
-        case '.aif':
-            return 'audio/aiff';
-        default:
-            return 'application/octet-stream';
+    const mimeType = SUPPORTED_AUDIO_MIME_TYPES[ext];
+    if (!mimeType) {
+        throw new Error(
+            `Unsupported file format "${ext || 'none'}". ` +
+            `Only audio files (${Object.keys(SUPPORTED_AUDIO_MIME_TYPES).join(', ')}) are accepted.`
+        );
     }
+    return mimeType;
+}
+
+/**
+ * Safely constructs the target endpoint URL without string manipulation hazards.
+ */
+export function buildTargetUrl(apiUrl: string, extractLyrics: boolean): string {
+    const url = new URL(apiUrl);
+    if (extractLyrics) {
+        const cleanPath = url.pathname.replace(/\/+$/, '');
+        if (cleanPath.endsWith('/analyze')) {
+            url.pathname = cleanPath + '-with-lyrics';
+        } else if (!cleanPath.endsWith('/analyze-with-lyrics')) {
+            url.pathname = cleanPath.replace(/\/analyze$/, '') + '/analyze-with-lyrics';
+        }
+    }
+    return url.toString();
 }
 
 /**
@@ -76,7 +150,7 @@ export function getAudioMimeType(filename: string): string {
  * Supports both remote URLs (fileUrl) and local binary files (filePath).
  * 
  * @param input Either a fileUrl/filePath string or an object with fileUrl or filePath.
- * @param privateKey Hex string representing the private key.
+ * @param privateKey Hex string representing the private key (validated 64-hex char).
  * @param apiUrl The Tag-per-Track API base URL.
  * @param extractLyrics Whether to extract vocal lyrics in addition to metadata.
  * @returns The analysis result JSON.
@@ -86,7 +160,7 @@ export async function analyzeAudio(
     privateKey: string,
     apiUrl: string,
     extractLyrics: boolean = false
-): Promise<any> {
+): Promise<AudioAnalysisResult> {
     const account = privateKeyToAccount(privateKey as Hex);
 
     // Resolve input parameters
@@ -132,7 +206,8 @@ export async function analyzeAudio(
         throw new Error("Missing audio source: Please provide either 'filePath' (for a local audio file on disk) or 'fileUrl' (for a public HTTP/HTTPS or IPFS URL).");
     }
 
-    let localFileData: { buffer: Buffer; filename: string; mimeType: string } | undefined;
+    // Pre-validate local file metadata (WITHOUT loading buffer into memory yet)
+    let localFileMeta: { resolvedPath: string; filename: string; mimeType: string; size: number } | undefined;
 
     if (filePath) {
         const resolvedPath = resolveLocalPath(filePath);
@@ -146,73 +221,109 @@ export async function analyzeAudio(
         if (stat.size > MAX_LOCAL_FILE_SIZE) {
             throw new Error(`File is too large (${(stat.size / 1024 / 1024).toFixed(2)} MB). Maximum allowed size is 50MB.`);
         }
-        const buffer = await fs.promises.readFile(resolvedPath);
         const filename = path.basename(resolvedPath);
-        const mimeType = getAudioMimeType(filename);
-        localFileData = { buffer, filename, mimeType };
+        const mimeType = getAudioMimeType(filename); // Throws if not a recognized audio extension
+        localFileMeta = { resolvedPath, filename, mimeType, size: stat.size };
     }
 
-    const targetUrl = extractLyrics
-        ? (apiUrl.endsWith('/analyze') ? `${apiUrl}-with-lyrics` : `${apiUrl.replace(/\/analyze$/, '')}/analyze-with-lyrics`)
-        : apiUrl;
+    const targetUrl = buildTargetUrl(apiUrl, extractLyrics);
 
-    const sourceDescription = localFileData
-        ? `local file: ${localFileData.filename} (${(localFileData.buffer.length / 1024 / 1024).toFixed(2)} MB)`
+    const sourceDescription = localFileMeta
+        ? `local file: ${localFileMeta.filename} (${(localFileMeta.size / 1024 / 1024).toFixed(2)} MB)`
         : `remote URL: ${fileUrl}`;
 
     console.error(`[Tag-per-Track MCP] Starting analysis for ${sourceDescription} (extractLyrics: ${extractLyrics})`);
     console.error(`[Tag-per-Track MCP] Target endpoint: ${targetUrl}`);
 
-    // 1. Initial Request (Triggers 402 Payment Required)
-    const triggerBody = fileUrl ? { fileUrl } : { fileName: localFileData?.filename };
-    const initialResponse = await fetch(targetUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(triggerBody)
-    });
+    // 1. Initial Request (Triggers 402 Payment Required) - 15s timeout
+    const triggerBody = fileUrl ? { fileUrl } : { fileName: localFileMeta?.filename };
+    let initialResponse: Response;
+
+    try {
+        initialResponse = await fetch(targetUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(triggerBody),
+            signal: AbortSignal.timeout(15_000)
+        });
+    } catch (networkError: any) {
+        if (networkError.name === 'TimeoutError') {
+            throw new Error(`Initial connection to ${targetUrl} timed out after 15 seconds. Please verify your internet connection or API status.`);
+        }
+        throw new Error(`Failed to reach Tag-per-Track API: ${networkError.message}`);
+    }
 
     if (initialResponse.status === 400) {
-        const error = await initialResponse.json();
-        throw new Error(`Request failed: ${error.message}`);
+        let errorMsg = 'Bad request';
+        try {
+            const error = await initialResponse.json();
+            errorMsg = error.message || errorMsg;
+        } catch {}
+        throw new Error(`Request failed (HTTP 400): ${errorMsg}`);
     }
 
     if (initialResponse.status !== 402) {
-        throw new Error(`Expected HTTP 402, but received ${initialResponse.status}`);
+        let errorDetail = '';
+        try {
+            const text = await initialResponse.text();
+            if (text) errorDetail = `: ${text.slice(0, 300)}`;
+        } catch {}
+        throw new Error(`Expected HTTP 402 Payment Required from API, but received HTTP ${initialResponse.status}${errorDetail}`);
     }
 
     // 2. Extract x402 Payment Requirements
     const paymentRequiredHeader = initialResponse.headers.get("PAYMENT-REQUIRED");
-    let requirements;
+    let requirements: X402Requirements;
     
-    if (paymentRequiredHeader) {
-        // Node.js / Browser compatible base64 decoding
-        const decoded = typeof atob !== 'undefined' 
-            ? atob(paymentRequiredHeader) 
-            : Buffer.from(paymentRequiredHeader, 'base64').toString('utf-8');
-        requirements = JSON.parse(decoded);
-    } else {
-        // Fallback to body for backwards compatibility
-        const errorData = await initialResponse.json();
-        requirements = errorData.paymentRequirements;
+    try {
+        if (paymentRequiredHeader) {
+            const decoded = typeof atob !== 'undefined' 
+                ? atob(paymentRequiredHeader) 
+                : Buffer.from(paymentRequiredHeader, 'base64').toString('utf-8');
+            requirements = JSON.parse(decoded);
+        } else {
+            const errorData = await initialResponse.json();
+            requirements = errorData.paymentRequirements;
+        }
+    } catch (parseError: any) {
+        throw new Error(`Failed to parse x402 payment requirements from server: ${parseError.message}`);
     }
 
     if (!requirements) {
-        throw new Error("Missing 'paymentRequirements' in the 402 response.");
+        throw new Error("Missing 'paymentRequirements' in the HTTP 402 response.");
     }
 
     // Handle x402 v2 structure where payment terms are in 'accepts' array
-    const accept = requirements.accepts ? requirements.accepts[0] : requirements;
+    const accept: X402PaymentAccept | undefined = requirements.accepts ? requirements.accepts[0] : (requirements as unknown as X402PaymentAccept);
 
-    if (!accept) {
-        throw new Error("Missing 'accepts' payment conditions in the 402 response.");
+    if (!accept || !accept.asset || !accept.payTo) {
+        throw new Error("Incomplete payment terms in x402 response (missing asset or payTo address).");
     }
 
-    console.error(`[Tag-per-Track MCP] 402 Received. Preparing EIP-3009 signature for payment...`);
+    // 3. Enforce Financial Spending Cap & Security Guards
+    const rawAmount = accept.amount || accept.maxAmountRequired;
+    if (!rawAmount) {
+        throw new Error("Missing payment amount in x402 terms.");
+    }
 
-    // 3. Construct EIP-3009 Message (TransferWithAuthorization)
+    const requestedAmount = BigInt(rawAmount);
+    const maxSpendingCap = getMaxSpendingCap();
+
+    if (requestedAmount > maxSpendingCap) {
+        const requestedUsdc = (Number(requestedAmount) / 1_000_000).toFixed(4);
+        const maxUsdc = (Number(maxSpendingCap) / 1_000_000).toFixed(4);
+        throw new Error(
+            `[Security Guard] Requested payment of ${requestedUsdc} USDC exceeds your maximum spending limit of ${maxUsdc} USDC. ` +
+            `Aborting transaction to protect your wallet. You can increase this limit by setting the MAX_SPENDING_USDC environment variable.`
+        );
+    }
+
+    console.error(`[Tag-per-Track MCP] 402 Received. Payment authorized: ${(Number(requestedAmount) / 1_000_000).toFixed(2)} USDC to ${accept.payTo}. Preparing EIP-3009 signature...`);
+
+    // 4. Construct EIP-3009 Message (TransferWithAuthorization)
     const randomBytes = crypto.getRandomValues(new Uint8Array(32));
     const nonce = `0x${Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('')}`;
-    const validBefore = Math.floor(Date.now() / 1000) + 3600; // expires in 1 hour
+    const validBefore = Math.floor(Date.now() / 1000) + EIP3009_VALIDITY_SECONDS; // 5 minutes TTL
 
     // Determine chain ID from network requirement
     const chainId = accept.network.includes(':')
@@ -240,13 +351,13 @@ export async function analyzeAudio(
     const message = {
         from: account.address,
         to: accept.payTo as Hex,
-        value: BigInt(accept.amount || accept.maxAmountRequired),
+        value: requestedAmount,
         validAfter: BigInt(0),
         validBefore: BigInt(validBefore),
         nonce: nonce as Hex,
     };
 
-    // 4. Sign the Authorization Message
+    // 5. Sign the Authorization Message
     const signature = await account.signTypedData({
         domain,
         types,
@@ -254,7 +365,7 @@ export async function analyzeAudio(
         message,
     });
 
-    // 5. Construct Payment Proof (x402 V2 structure aligned with standard)
+    // 6. Construct Payment Proof (x402 V2 structure aligned with standard)
     const paymentProof = JSON.stringify({
         x402Version: 2,
         accepted: accept,
@@ -279,35 +390,55 @@ export async function analyzeAudio(
         extensions: requirements.extensions
     });
 
-    console.error(`[Tag-per-Track MCP] Proof generated and signed. Re-submitting request to ${targetUrl}...`);
+    console.error(`[Tag-per-Track MCP] Proof generated and signed. Submitting analysis request to ${targetUrl}...`);
 
-    // 6. Secondary Call with PAYMENT-SIGNATURE header
+    // 7. Secondary Call with PAYMENT-SIGNATURE header & deferred file read
     const headers: Record<string, string> = {
         'PAYMENT-SIGNATURE': paymentProof,
         'X-Payment-Proof': paymentProof // Kept for backwards compatibility
     };
 
     let body: BodyInit;
-    if (localFileData) {
+    if (localFileMeta) {
+        // Deferred read: only read into memory now that the payment challenge has succeeded
+        const buffer = await fs.promises.readFile(localFileMeta.resolvedPath);
         const formData = new FormData();
-        const blob = new Blob([new Uint8Array(localFileData.buffer)], { type: localFileData.mimeType });
-        formData.append('file', blob, localFileData.filename);
+        const blob = new Blob([buffer], { type: localFileMeta.mimeType });
+        formData.append('file', blob, localFileMeta.filename);
         body = formData;
     } else {
         headers['Content-Type'] = 'application/json';
         body = JSON.stringify({ fileUrl });
     }
 
-    const finalResponse = await fetch(targetUrl, {
-        method: 'POST',
-        headers,
-        body
-    });
+    let finalResponse: Response;
+    try {
+        finalResponse = await fetch(targetUrl, {
+            method: 'POST',
+            headers,
+            body,
+            signal: AbortSignal.timeout(120_000) // 120s timeout for heavy audio/lyrics AI models
+        });
+    } catch (networkError: any) {
+        if (networkError.name === 'TimeoutError') {
+            throw new Error(`Audio analysis timed out after 120 seconds. The audio processing pipeline took longer than expected.`);
+        }
+        throw new Error(`Failed to transmit signed analysis request: ${networkError.message}`);
+    }
 
     if (!finalResponse.ok) {
-        const error = await finalResponse.json();
-        console.error("[Tag-per-Track MCP] Detailed backend error:", JSON.stringify(error, null, 2));
-        throw new Error(error.message || `Analysis failed after payment (HTTP ${finalResponse.status}).`);
+        let errorMsg = `Analysis failed after payment (HTTP ${finalResponse.status})`;
+        try {
+            const error = await finalResponse.json();
+            errorMsg = error.message || errorMsg;
+            console.error("[Tag-per-Track MCP] Detailed backend error:", JSON.stringify(error, null, 2));
+        } catch {
+            try {
+                const rawText = await finalResponse.text();
+                if (rawText) errorMsg += `: ${rawText.slice(0, 300)}`;
+            } catch {}
+        }
+        throw new Error(errorMsg);
     }
 
     const result = await finalResponse.json();

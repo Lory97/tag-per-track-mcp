@@ -20,12 +20,16 @@
     "x402",
     "audio"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "Lory Ferrand",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lory97/tag-per-track-mcp.git"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^17.4.2",
-    "viem": "^2.48.4",
+    "viem": "^2.56.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {

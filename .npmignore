@@ -1,4 +1,4 @@
-# Source files (only dist/ should be published)
+# Source files (only build/ should be published)
 src/
 tsconfig.json
 
@@ -17,5 +17,5 @@ yarn-error.log*
 .git/
 .gitignore
 
-# Compiled files that shouldn't be here (dist handles this)
+# Compiled files that shouldn't be here (build/ handles this)
 *.tsbuildinfo

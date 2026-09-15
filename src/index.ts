@@ -11,21 +11,43 @@ import { analyzeAudio } from './x402.js';
 
 dotenv.config({ quiet: true });
 
-// Parse private key from arguments
-// E.g. `npx tag-per-track-mcp 0x...` or `tag-per-track-mcp 0x...`
-const privateKey = process.argv.find(arg => arg.startsWith('0x'));
+// 1. Resolve & Validate Private Key
+// Priority: environment variable PRIVATE_KEY (recommended) -> CLI argument (fallback)
+const PRIVATE_KEY_REGEX = /^0x[a-fA-F0-9]{64}$/;
+
+let privateKey = process.env.PRIVATE_KEY || process.env.TAG_PER_TRACK_PRIVATE_KEY;
 
 if (!privateKey) {
-  console.error("Error: Please provide a private key as a command line argument (must start with '0x').");
+  const cliArg = process.argv.find(arg => arg.startsWith('0x'));
+  if (cliArg) {
+    privateKey = cliArg;
+  }
+}
+
+if (!privateKey) {
+  console.error(
+    "[Tag-per-Track MCP] Error: No private key provided.\n" +
+    "Please provide your wallet private key using the PRIVATE_KEY environment variable (recommended) " +
+    "or as a CLI argument (e.g. npx tag-per-track-mcp 0x...)."
+  );
+  process.exit(1);
+}
+
+if (!PRIVATE_KEY_REGEX.test(privateKey)) {
+  console.error(
+    "[Tag-per-Track MCP] Error: Invalid private key format.\n" +
+    "The private key must be a 66-character hexadecimal string starting with '0x'."
+  );
   process.exit(1);
 }
 
 const API_URL = process.env.API_URL || "https://api.tag-per-track.cloud/api/analyze";
 
+// 2. Initialize MCP Server
 const server = new Server(
   {
     name: "tag-per-track-mcp",
-    version: "1.0.0",
+    version: "1.2.1",
   },
   {
     capabilities: {
@@ -45,7 +67,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             filePath: {
               type: "string",
-              description: "Path to a local audio file on disk (.mp3, .wav, .ogg, .flac). Use this whenever analyzing a local file, recording, or email attachment saved locally."
+              description: "Path to a local audio file on disk (.mp3, .wav, .ogg, .flac, .m4a, .aac, .aiff). Use this whenever analyzing a local file, recording, or email attachment saved locally."
             },
             fileUrl: {
               type: "string",
@@ -53,20 +75,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             extractLyrics: {
               type: "boolean",
-              description: "Optional: Set to true to transcribe and extract song lyrics in addition to metadata. Costs 0.10 USDC instead of 0.05 USDC."
+              description: "Optional: Set to true to transcribe and extract vocal lyrics in addition to metadata. Costs 0.10 USDC instead of 0.05 USDC."
             }
           }
         }
       },
       {
         name: "analyze_audio_with_lyrics",
-        description: "Analyzes an audio track to extract complete musical metadata AND transcribe full vocal lyrics using AI. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: This tool automatically executes a micro-payment of 0.10 USDC via the x402 protocol on Base.",
+        description: "Analyzes an audio track to extract complete musical metadata AND transcribe full vocal lyrics using AI. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: This tool automatically executes a micro-payment of 0.10 USDC via the x402 protocol on Base. (Alias for analyze_audio with extractLyrics: true).",
         inputSchema: {
           type: "object",
           properties: {
             filePath: {
               type: "string",
-              description: "Path to a local audio file on disk (.mp3, .wav, .ogg, .flac). Use this whenever analyzing a local file, recording, or email attachment saved locally."
+              description: "Path to a local audio file on disk (.mp3, .wav, .ogg, .flac, .m4a, .aac, .aiff). Use this whenever analyzing a local file, recording, or email attachment saved locally."
             },
             fileUrl: {
               type: "string",
@@ -109,12 +131,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       ]
     };
   } catch (error: any) {
+    const rawError = error?.message || String(error);
+    let contextualHelp = "";
+
+    if (rawError.includes("[Security Guard]")) {
+      contextualHelp = " Transaction halted by client security policy.";
+    } else if (rawError.includes("timed out") || rawError.includes("Failed to reach")) {
+      contextualHelp = " Check network connectivity or remote API availability.";
+    } else if (rawError.includes("Local file not found") || rawError.includes("Unsupported file format")) {
+      contextualHelp = " Verify file path and ensure it has a supported audio extension (.mp3, .wav, .flac, etc.).";
+    } else if (rawError.toLowerCase().includes("funds") || rawError.toLowerCase().includes("balance") || rawError.toLowerCase().includes("payment")) {
+      contextualHelp = " Ensure your burner wallet has sufficient USDC on the Base network.";
+    }
+
     return {
       isError: true,
       content: [
         {
           type: "text",
-          text: `Error analyzing track: ${error.message}. Ensure your wallet has sufficient USDC on the correct network.`
+          text: `Error analyzing track: ${rawError}.${contextualHelp}`
         }
       ]
     };
@@ -124,7 +159,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[Tag-per-Track MCP] Server started on stdio");
+  console.error("[Tag-per-Track MCP] Server started on stdio (v1.2.1)");
 }
 
 main().catch(error => {
