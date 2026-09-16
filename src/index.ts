@@ -9,18 +9,18 @@ import {
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import * as dotenv from 'dotenv';
-import { analyzeAudio } from './x402.js';
+import { analyzeAudio, analyzeAudioBatch, type BatchTrackItem } from './x402.js';
 
 dotenv.config({ quiet: true });
 
 // Read package version dynamically from package.json with fallback
-let packageVersion = "1.2.2";
+let packageVersion = "1.2.3";
 try {
   const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
   if (pkg.version) packageVersion = pkg.version;
 } catch {
-  // fallback to 1.2.2
+  // fallback to 1.2.3
 }
 
 // 1. Resolve & Validate Private Key
@@ -108,6 +108,54 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
           }
         }
+      },
+      {
+        name: "analyze_audio_batch",
+        description: "Analyzes multiple music tracks or audio files in parallel (batch processing). Vastly reduces total execution time compared to sequential processing. Accepts a list of local file paths ('filePaths') or remote URLs ('fileUrls'), or a structured array of 'tracks'. Executes micro-payments per track on Base via x402.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tracks: {
+              type: "array",
+              description: "Array of audio items to analyze in parallel. Each item can specify 'filePath' or 'fileUrl' and optional per-track 'extractLyrics'.",
+              items: {
+                type: "object",
+                properties: {
+                  filePath: {
+                    type: "string",
+                    description: "Path to a local audio file on disk."
+                  },
+                  fileUrl: {
+                    type: "string",
+                    description: "Direct public URL of the audio file."
+                  },
+                  extractLyrics: {
+                    type: "boolean",
+                    description: "Whether to extract vocal lyrics for this specific track (costs 0.10 USDC instead of 0.05 USDC)."
+                  }
+                }
+              }
+            },
+            filePaths: {
+              type: "array",
+              items: { type: "string" },
+              description: "Convenience shortcut: list of local audio file paths to analyze in parallel."
+            },
+            fileUrls: {
+              type: "array",
+              items: { type: "string" },
+              description: "Convenience shortcut: list of remote audio URLs to analyze in parallel."
+            },
+            extractLyrics: {
+              type: "boolean",
+              description: "Optional global flag: set to true to transcribe and extract vocal lyrics for all tracks in this batch (0.10 USDC per track). Default is false (0.05 USDC per track)."
+            },
+            concurrency: {
+              type: "number",
+              description: "Maximum number of simultaneous parallel requests (1 to 5, default is 4 to respect API rate limits)."
+            }
+          }
+        }
       }
     ]
   };
@@ -115,6 +163,69 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const toolName = request.params.name;
+
+  if (toolName === "analyze_audio_batch") {
+    const args = (request.params.arguments || {}) as {
+      tracks?: Array<{ filePath?: string; fileUrl?: string; extractLyrics?: boolean }>;
+      filePaths?: string[];
+      fileUrls?: string[];
+      extractLyrics?: boolean;
+      concurrency?: number;
+    };
+
+    const tracksToProcess: BatchTrackItem[] = [];
+
+    if (Array.isArray(args.tracks) && args.tracks.length > 0) {
+      tracksToProcess.push(...args.tracks);
+    }
+    if (Array.isArray(args.filePaths)) {
+      for (const fp of args.filePaths) {
+        if (typeof fp === 'string' && fp.trim()) {
+          tracksToProcess.push({ filePath: fp.trim() });
+        }
+      }
+    }
+    if (Array.isArray(args.fileUrls)) {
+      for (const fu of args.fileUrls) {
+        if (typeof fu === 'string' && fu.trim()) {
+          tracksToProcess.push({ fileUrl: fu.trim() });
+        }
+      }
+    }
+
+    if (tracksToProcess.length === 0) {
+      throw new Error("Missing tracks for batch: Please provide 'tracks', 'filePaths', or 'fileUrls' array.");
+    }
+
+    try {
+      const batchResult = await analyzeAudioBatch(
+        tracksToProcess,
+        privateKey,
+        API_URL,
+        Boolean(args.extractLyrics),
+        args.concurrency || 4
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(batchResult, null, 2)
+          }
+        ]
+      };
+    } catch (error: any) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Error executing batch analysis: ${error?.message || String(error)}`
+          }
+        ]
+      };
+    }
+  }
 
   if (toolName !== "analyze_audio" && toolName !== "analyze_audio_with_lyrics") {
     throw new Error(`Unknown tool: ${toolName}`);
