@@ -54,6 +54,7 @@ if (!PRIVATE_KEY_REGEX.test(privateKey)) {
 }
 
 const API_URL = process.env.API_URL || "https://api.tag-per-track.cloud/api/analyze";
+const API_BASE_URL = process.env.API_BASE_URL || API_URL.replace(/\/analyze\/?$/, '');
 
 // 2. Initialize MCP Server
 const server = new Server(
@@ -156,6 +157,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
           }
         }
+      },
+      {
+        name: "lookup_artist_stats",
+        description: "Récupère les métriques de traction et de streaming d'un artiste (auditeurs Spotify, abonnés, score de popularité) pour la qualification A&R.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            artist_name: {
+              type: "string",
+              description: "Nom de scène de l'artiste."
+            },
+            social_links: {
+              type: "array",
+              items: { type: "string" },
+              description: "Liens optionnels vers les profils sociaux pour un enrichissement futur."
+            }
+          },
+          required: ["artist_name"]
+        }
       }
     ]
   };
@@ -164,7 +184,85 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const toolName = request.params.name;
 
+  if (toolName === "lookup_artist_stats") {
+    const args = (request.params.arguments || {}) as {
+      artist_name?: string;
+      social_links?: string[];
+    };
+
+    const artistName = typeof args.artist_name === 'string' ? args.artist_name.trim() : '';
+    if (!artistName) {
+      throw new Error("Missing required parameter 'artist_name'. Please provide the stage name of the artist.");
+    }
+
+    try {
+      const targetUrl = `${API_BASE_URL}/artist-stats?name=${encodeURIComponent(artistName)}`;
+      const response = await fetch(targetUrl, {
+        method: "GET",
+        headers: {
+          "Accept": "application/json"
+        },
+        signal: AbortSignal.timeout(15000), // 15s timeout
+      });
+
+      if (response.status === 404) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                status: "not_found",
+                artist: artistName,
+                message: `Artist "${artistName}" not found on Spotify.`,
+                social_links: args.social_links || []
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => "");
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `Backend API returned HTTP ${response.status} for artist "${artistName}": ${errorBody || response.statusText}`
+            }
+          ]
+        };
+      }
+
+      const data = await response.json();
+      const enrichedResult = {
+        ...data,
+        social_links: args.social_links || []
+      };
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(enrichedResult, null, 2)
+          }
+        ]
+      };
+    } catch (error: any) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Error looking up artist stats for "${artistName}": ${error?.message || String(error)}`
+          }
+        ]
+      };
+    }
+  }
+
   if (toolName === "analyze_audio_batch") {
+
     const args = (request.params.arguments || {}) as {
       tracks?: Array<{ filePath?: string; fileUrl?: string; extractLyrics?: boolean }>;
       filePaths?: string[];

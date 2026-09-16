@@ -9,6 +9,7 @@ Enable an AI to "pay to listen" autonomously. When an AI agent wants to analyze 
 - **`analyze_audio` Tool (Canonical)**: Extracts BPM, Genre, Mood, Key, Instruments, and optional Lyrics (0.05 USDC standard / 0.10 USDC with lyrics).
 - **`analyze_audio_with_lyrics` Tool (Alias)**: Extracts complete musical metadata AND transcribes full vocal lyrics (0.10 USDC).
 - **`analyze_audio_batch` Tool (Parallel Processing)**: Analyzes multiple music tracks concurrently, dramatically reducing turnaround time for albums and playlists.
+- **`lookup_artist_stats` Tool (A&R Traction)**: Fetches public Spotify streaming traction (monthly listeners, followers, popularity score, genres) for hybrid A&R qualification.
 - **Selective Audio Compression**: Automatically compresses heavy uncompressed files (`.wav`, `.aiff`, `.aif`) or audio files larger than 15 MB to 128 kbps AAC (`.m4a`) before upload (using native macOS `afconvert` or `ffmpeg`), reducing upload bandwidth and latency by up to 90% while leaving lightweight files (`.mp3`, `.m4a` $\le 15$ MB) untouched.
 - **Automated x402 Payment**: Manages the x402 challenge-response cycle (HTTP 402).
 - **Integrated Web3**: On-chain signing via `viem` (EIP-3009 TransferWithAuthorization on Base).
@@ -24,6 +25,8 @@ Enable an AI to "pay to listen" autonomously. When an AI agent wants to analyze 
 | `PRIVATE_KEY` | **Recommended:** Private key of your Base burner wallet (66 hex characters starting with `0x`). | None (Required) |
 | `MAX_SPENDING_USDC` | Client-side spending cap per request in USDC. | `0.20` |
 | `API_URL` | Endpoint of the Tag-per-Track analysis API. | `https://api.tag-per-track.cloud/api/analyze` |
+| `API_BASE_URL` | Base endpoint of the Tag-per-Track API for auxiliary routes (e.g. artist stats). | `https://api.tag-per-track.cloud/api` |
+
 
 > [!IMPORTANT]
 > Ensure your wallet has sufficient **USDC** on the **Base** network.  
@@ -107,6 +110,109 @@ Analyzes multiple audio tracks in parallel (batch processing). Vastly reduces to
   - `failed`: Count of failed tracks.
   - `results`: Detailed array containing status (`success` or `error`), metadata, or error reason for each track.
 
+### 4. `lookup_artist_stats`
+Récupère les métriques de traction et de streaming d'un artiste (auditeurs Spotify, abonnés, score de popularité, genres) pour la qualification A&R. Ce service est strictement découplé de l'analyse acoustique et bénéficie d'un cache mémoire TTL de 24h.
+
+- **Arguments**:
+  - `artist_name` (*string*, requis) : Nom de scène de l'artiste (ex: `"Daft Punk"`, `"Kaytranada"`).
+  - `social_links` (*string[]*, optionnel) : Liens optionnels vers les profils sociaux pour un enrichissement futur.
+
+- **Output Structure**:
+```json
+{
+  "name": "Daft Punk",
+  "spotify": {
+    "id": "4tZwfgrHOc3mvqYlEYSvVi",
+    "followers": 11769126,
+    "popularity": 84,
+    "monthlyListeners": 29284872,
+    "genres": ["electro", "filter house"],
+    "url": "https://open.spotify.com/artist/4tZwfgrHOc3mvqYlEYSvVi"
+  },
+  "cached": true,
+  "social_links": []
+}
+```
+
+---
+
+## 🤖 Guide & Prompts Système pour Agents A&R (Scoring Hybride)
+
+L'évaluation A&R moderne combine deux dimensions fondamentales :
+1. **Fiche acoustique intrinsèque** (BPM, tonalité/scale, mood, instrumentation, paroles).
+2. **Traction & potentiel commercial** (volume d'auditeurs Spotify, fidélité/abonnés, momentum/popularité).
+
+### 🎯 Workflow d'Orchestration pour l'Agent
+
+```mermaid
+graph TD
+    Submission[Nouvelle soumission musicale] --> DetectArtist{Artiste identifiable ?}
+    
+    Submission --> Step1[1. Invoquer analyze_audio]
+    Step1 --> AcousticData[Fiche acoustique: BPM, Key, Mood, Genres, Lyrics]
+    
+    DetectArtist -->|Oui: Nom identifié| Step2[2. Invoquer lookup_artist_stats]
+    DetectArtist -->|Non: Démo anonyme| Step2Skip[Traction: Non disponible / Démo pure]
+    
+    Step2 --> TractionData[Traction Spotify: Followers, Monthly Listeners, Popularity]
+    
+    AcousticData --> Consolidate[3. Consolidation A&R]
+    TractionData --> Consolidate
+    Step2Skip --> Consolidate
+    
+    Consolidate --> Matrix[Matrice d'évaluation A&R unifiée]
+```
+
+1. **Étape 1 — Analyse Acoustique :**
+   Appeler `analyze_audio` (ou `analyze_audio_with_lyrics` si le texte ou le message vocal est primordial) avec `filePath` ou `fileUrl`. Ce processus déclenche automatiquement le micro-paiement x402 de 0.05 ou 0.10 USDC.
+2. **Étape 2 — Lookup Traction Artiste :**
+   Dès que le nom de scène de l'artiste est connu (dans le titre du fichier, le prompt utilisateur ou les métadonnées ID3), invoquer `lookup_artist_stats(artist_name: "...")`.
+3. **Étape 3 — Consolidation dans la Matrice d'Évaluation A&R Unifiée :**
+   L'agent synthétise les données dans un tableau standardisé comportant impérativement les 6 colonnes suivantes :
+
+| Titre | Artiste | BPM / Clé | Style | Traction Streaming | Recommandation stratégique |
+|---|---|---|---|---|---|
+| *Nom du morceau* | *Nom de scène* | *Ex: 124 BPM / A minor* | *Genres dominants & humeur* | *Ex: 29.2M auditeurs, 11.7M abonnés (Pop. 84)* | *Signature immédiate, Placement playlist, ou Développement* |
+
+---
+
+### 📋 Exemple de Prompt Système pour Agents A&R
+
+Voici un exemple de prompt système prêt à l'emploi pour configurer un agent IA A&R (sur Claude Desktop, Cursor, ou LangChain/AgentKit) :
+
+```markdown
+Tu es un Directeur Artistique (A&R Executive) d'élite spécialisé dans le scouting musical, l'analyse de démos et la signature de talents.
+
+Tu as accès à deux outils principaux :
+1. `analyze_audio` : Analyse acoustique complète d'un fichier audio (BPM, tonalité/gamme, humeur, genre, instrumentation, et optionnellement paroles).
+2. `lookup_artist_stats` : Récupération des métriques publiques Spotify (abonnés, auditeurs mensuels, indice de popularité, profil de streaming).
+
+RÈGLES DE COMPORTEMENT A&R :
+1. ANALYSE ACOUSTIQUE SYSTÉMATIQUE :
+   - Pour chaque fichier soumis, invoque `analyze_audio` (ou `analyze_audio_with_lyrics` pour les morceaux à fort contenu vocal).
+   - Identifie la cohérence du tempo (BPM), la structure harmonique (clé et gamme) et la couleur émotionnelle (moods).
+
+2. ANALYSE DE TRACTION ARTISTE :
+   - Si le nom de l'artiste est mentionné ou déductible des métadonnées, invoque immédiatement `lookup_artist_stats(artist_name)`.
+   - Si l'artiste n'a pas encore de profil Spotify (artiste émergent de chambre / démo pure), note-le comme « Émergent / Sans empreinte streaming » et axe l'évaluation sur le potentiel acoustique pur.
+
+3. RESTITUTION DANS LA MATRICE UNIFIÉE :
+   Termine toujours ton diagnostic par la **Matrice d'évaluation A&R unifiée** sous forme de tableau Markdown :
+
+| Titre | Artiste | BPM / Clé | Style | Traction Streaming | Recommandation stratégique |
+|---|---|---|---|---|---|
+| [Titre] | [Artiste] | [BPM] BPM / [Clé] [Gamme] | [Genres principaux] ([Mood]) | [Auditeurs mensuels] auditeurs, [Abonnés] abonnés | [Signer / Playlist / Développer / Rejeter] + Justification |
+
+4. CATÉGORIES DE RECOMMANDATIONS STRATÉGIQUES :
+   - 🌟 **Signature Prioritaire (Direct Sign)** : Qualité de production radio-ready ET forte traction streaming croissante.
+   - 🎯 **Pitch Playlist & Sync (Licensing)** : Métriques d'ambiance parfaites pour des playlists éditoriales ou du placement synchro média/jeux vidéo.
+   - 🌱 **Développement Artistique (Artist Dev)** : Production ou voix à fort potentiel mais audience encore embryonnaire.
+   - ⏸️ **À retravailler (Pass / Feedback)** : Mixage imparfait, BPM instable ou manque d'originalité artistique.
+```
+
+---
+
 ## 📄 License
 MIT
+
 
