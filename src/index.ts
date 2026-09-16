@@ -160,23 +160,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "lookup_artist_stats",
-        description: "Récupère les métriques de traction et de streaming d'un artiste (auditeurs Spotify, abonnés, score de popularité) pour la qualification A&R.",
+        description: "Retrieves streaming traction and commercial metrics for an artist (Spotify monthly listeners, followers, popularity score) for A&R qualification.",
         inputSchema: {
           type: "object",
           properties: {
             artist_name: {
               type: "string",
-              description: "Nom de scène de l'artiste."
+              description: "Stage name of the artist to look up."
             },
             social_links: {
               type: "array",
               items: { type: "string" },
-              description: "Liens optionnels vers les profils sociaux pour un enrichissement futur."
+              description: "Optional social media profile links for future enrichment."
             }
           },
           required: ["artist_name"]
         }
       }
+
     ]
   };
 });
