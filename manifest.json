@@ -1,0 +1,75 @@
+{
+  "manifest_version": "0.3",
+  "name": "tag-per-track",
+  "display_name": "Tag-per-Track",
+  "version": "1.3.2",
+  "description": "Agentic-first audio analysis and music tagging with x402 USDC micro-payments on Base.",
+  "author": {
+    "name": "Lory Ferrand"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/Lory97/tag-per-track-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lory97/tag-per-track-mcp.git"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "build/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/build/index.js"
+      ],
+      "env": {
+        "PRIVATE_KEY": "${user_config.private_key}",
+        "MAX_SPENDING_USDC": "${user_config.max_spending_usdc}",
+        "API_URL": "${user_config.api_url}",
+        "API_BASE_URL": "${user_config.api_base_url}"
+      }
+    }
+  },
+  "user_config": {
+    "private_key": {
+      "type": "string",
+      "title": "Base Burner Wallet Private Key",
+      "description": "66-character hex private key starting with 0x (burner wallet funded with USDC on Base network)",
+      "sensitive": true,
+      "required": true
+    },
+    "max_spending_usdc": {
+      "type": "string",
+      "title": "Max Spending Cap (USDC)",
+      "description": "Client-side safety limit in USDC per request (default: 0.20)",
+      "default": "0.20",
+      "required": false
+    },
+    "api_url": {
+      "type": "string",
+      "title": "API URL",
+      "description": "Tag-per-Track analysis API endpoint URL",
+      "default": "https://api.tag-per-track.cloud/api/analyze",
+      "required": false
+    },
+    "api_base_url": {
+      "type": "string",
+      "title": "API Base URL",
+      "description": "Tag-per-Track base API endpoint URL",
+      "default": "https://api.tag-per-track.cloud/api",
+      "required": false
+    }
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "smithery",
+    "x402",
+    "audio",
+    "music-tagging",
+    "music-analysis",
+    "a-and-r",
+    "base",
+    "usdc",
+    "ai-agent"
+  ]
+}
