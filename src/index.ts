@@ -5,6 +5,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -23,34 +25,44 @@ try {
   // fallback to 1.2.3
 }
 
-// 1. Resolve & Validate Private Key
+// 1. Resolve & Validate Private Key Lazily
 // Priority: environment variable PRIVATE_KEY (recommended) -> CLI argument (fallback)
 const PRIVATE_KEY_REGEX = /^0x[a-fA-F0-9]{64}$/;
 
-let privateKey = process.env.PRIVATE_KEY || process.env.TAG_PER_TRACK_PRIVATE_KEY;
+function getPrivateKey(): string {
+  let key = process.env.PRIVATE_KEY || process.env.TAG_PER_TRACK_PRIVATE_KEY;
 
-if (!privateKey) {
-  const cliArg = process.argv.find(arg => arg.startsWith('0x'));
-  if (cliArg) {
-    privateKey = cliArg;
+  if (!key) {
+    const cliArg = process.argv.find(arg => arg.startsWith('0x'));
+    if (cliArg) {
+      key = cliArg;
+    }
   }
+
+  if (!key) {
+    throw new Error(
+      "[Tag-per-Track MCP] No private key provided. Please set the PRIVATE_KEY environment variable (or provide a 0x... CLI argument) to sign x402 USDC micro-payments on Base."
+    );
+  }
+
+  if (!PRIVATE_KEY_REGEX.test(key)) {
+    throw new Error(
+      "[Tag-per-Track MCP] Invalid private key format. The private key must be a 66-character hexadecimal string starting with '0x'."
+    );
+  }
+
+  return key;
 }
 
-if (!privateKey) {
+const initialPrivateKey = process.env.PRIVATE_KEY || process.env.TAG_PER_TRACK_PRIVATE_KEY || process.argv.find(arg => arg.startsWith('0x'));
+if (!initialPrivateKey) {
   console.error(
-    "[Tag-per-Track MCP] Error: No private key provided.\n" +
-    "Please provide your wallet private key using the PRIVATE_KEY environment variable (recommended) " +
-    "or as a CLI argument (e.g. npx tag-per-track-mcp 0x...)."
+    "[Tag-per-Track MCP] Notice: Server started without a PRIVATE_KEY. Tools discovery is active; monetized tools will require PRIVATE_KEY when invoked."
   );
-  process.exit(1);
-}
-
-if (!PRIVATE_KEY_REGEX.test(privateKey)) {
+} else if (!PRIVATE_KEY_REGEX.test(initialPrivateKey)) {
   console.error(
-    "[Tag-per-Track MCP] Error: Invalid private key format.\n" +
-    "The private key must be a 66-character hexadecimal string starting with '0x'."
+    "[Tag-per-Track MCP] Warning: The provided PRIVATE_KEY does not match the 66-character hex format starting with '0x'."
   );
-  process.exit(1);
 }
 
 const API_URL = process.env.API_URL || "https://api.tag-per-track.cloud/api/analyze";
@@ -65,6 +77,7 @@ const server = new Server(
   {
     capabilities: {
       tools: {},
+      prompts: {},
     },
   }
 );
@@ -297,9 +310,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     try {
+      const key = getPrivateKey();
       const batchResult = await analyzeAudioBatch(
         tracksToProcess,
-        privateKey,
+        key,
         API_URL,
         Boolean(args.extractLyrics),
         args.concurrency || 4
@@ -343,7 +357,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const shouldExtractLyrics = toolName === "analyze_audio_with_lyrics" || Boolean(extractLyrics);
 
   try {
-    const data = await analyzeAudio({ filePath, fileUrl }, privateKey, API_URL, shouldExtractLyrics);
+    const key = getPrivateKey();
+    const data = await analyzeAudio({ filePath, fileUrl }, key, API_URL, shouldExtractLyrics);
     return {
       content: [
         {
@@ -376,6 +391,127 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       ]
     };
   }
+});
+
+// 3. Register Prompts (Tailored to Tag-per-Track's Hybrid A&R & Acoustic Intelligence)
+server.setRequestHandler(ListPromptsRequestSchema, async () => {
+  return {
+    prompts: [
+      {
+        name: "qualify_demo_ar",
+        description: "Comprehensive A&R demo evaluation for record labels and music curators. Combines Essentia acoustic analysis (BPM, key, scale, moods, genres, instruments, lyrics) with real-time Spotify streaming traction (monthly listeners, popularity) to produce an A&R Executive Memo with an Emerging Gem verdict.",
+        arguments: [
+          {
+            name: "audio_source",
+            description: "Path to a local audio file on disk (.mp3, .wav, .flac, .m4a, .aiff) or remote public URL of the track",
+            required: true
+          },
+          {
+            name: "artist_name",
+            description: "Artist or band stage name to cross-reference public streaming traction on Spotify (monthly listeners, followers, popularity score)",
+            required: false
+          },
+          {
+            name: "extract_lyrics",
+            description: "Set to 'true' to transcribe full vocal lyrics using AI Whisper and evaluate lyrical themes (costs 0.10 USDC instead of 0.05 USDC)",
+            required: false
+          },
+          {
+            name: "curation_focus",
+            description: "Curatorial objective: 'label_signing_decision', 'dsp_playlist_pitching', 'sync_licensing', or 'dj_radio_programming'",
+            required: false
+          }
+        ]
+      },
+      {
+        name: "batch_demo_screening",
+        description: "Screens an EP, album, or folder of demo submissions in parallel using analyze_audio_batch. Evaluates energy flow, harmonic key progression, and selects standout lead singles.",
+        arguments: [
+          {
+            name: "audio_sources",
+            description: "Comma-separated list or JSON array of local audio file paths or remote URLs to analyze in parallel",
+            required: true
+          },
+          {
+            name: "screening_goal",
+            description: "Screening objective: 'lead_single_selection', 'tracklist_harmonic_sequencing', or 'demo_drop_filtering'",
+            required: false
+          }
+        ]
+      }
+    ]
+  };
+});
+
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+
+  if (name === "qualify_demo_ar") {
+    const source = args?.audio_source || "<path/to/audio>";
+    const artist = args?.artist_name ? args.artist_name.trim() : "";
+    const extractLyrics = args?.extract_lyrics === "true" || args?.extract_lyrics === "1";
+    const focus = args?.curation_focus || "label_signing_decision";
+
+    const artistInstruction = artist
+      ? `2. Streaming Traction Enrichment: Call the \`lookup_artist_stats\` tool with artist_name: "${artist}" to fetch public Spotify metrics (monthly listeners, followers, popularity index 0-100, and primary genres).\n`
+      : `2. Streaming Traction Enrichment: (No artist name specified; if you identify the artist from metadata or context, invoke \`lookup_artist_stats\` to cross-reference Spotify traction).\n`;
+
+    const tractionSection = artist
+      ? `2. Streaming Traction Matrix: Spotify monthly listeners, audience scale, popularity score, and current momentum.\n`
+      : ``;
+
+    return {
+      description: `A&R qualification for "${source}"${artist ? ` by ${artist}` : ''} (${focus})`,
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Act as a Senior A&R Director and Music Intelligence Analyst.\n` +
+              `Your objective is to qualify the track located at "${source}"${artist ? ` by "${artist}"` : ''} with a focus on "${focus}".\n\n` +
+              `Execute the following qualification protocol using the Tag-per-Track MCP tools:\n` +
+              `1. Acoustic Signal Analysis: Invoke \`analyze_audio\` on "${source}" (with extractLyrics: ${extractLyrics ? 'true' : 'false'}).\n` +
+              `${artistInstruction}` +
+              `3. Executive A&R Synthesis: Synthesize the acoustic data and streaming traction into an "A&R Executive Memo" structured as follows:\n` +
+              `   - 🎧 Acoustic Fingerprint: BPM, Key & Scale (harmonic mixing compatibility), Dominant Moods, Classified Genres & Sub-genres with confidence ratings, and Detected Instruments.\n` +
+              (extractLyrics ? `   - 📝 Lyrical Analysis: Key themes, hook memorability, and vocal presence.\n` : ``) +
+              `${tractionSection}` +
+              `   - 💎 Hybrid A&R Score & Tier: Classify the profile (Emerging Gem: <50k listeners with strong acoustic score, Rising Talent, or Established Artist) with a 0-100 viability score.\n` +
+              `   - 📋 Strategic Action Plan: Target DSP Editorial Playlists (Spotify / Apple Music), radio/club format viability, sync licensing potential, and final A&R recommendation (Sign, Creative Development, or Pass).`
+          }
+        }
+      ]
+    };
+  }
+
+  if (name === "batch_demo_screening") {
+    const sources = args?.audio_sources || "<path1.mp3, path2.mp3>";
+    const goal = args?.screening_goal || "lead_single_selection";
+
+    return {
+      description: `Batch demo screening for ${goal}`,
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Act as a Senior Music Curator and Label Project Manager.\n` +
+              `Your objective is to screen and qualify the following batch of tracks: ${sources}.\n` +
+              `Screening goal: "${goal}".\n\n` +
+              `Execute the screening using the Tag-per-Track MCP tools:\n` +
+              `1. Run \`analyze_audio_batch\` on the tracklist in parallel.\n` +
+              `2. Build a comparative evaluation matrix:\n` +
+              `   - Track Title / Source, BPM, Key, Dominant Mood, Primary Genre.\n` +
+              `3. Harmonic & Energy Sequencing: Evaluate BPM pacing and Camelot harmonic compatibility across the tracklist.\n` +
+              `4. Commercial Standouts: Flag the top 1-2 standout candidates for lead single / focus track and playlist pitching.\n` +
+              `5. Curator Verdict: Provide a prioritized release order and action plan.`
+          }
+        }
+      ]
+    };
+  }
+
+  throw new Error(`Prompt not found: ${name}`);
 });
 
 async function main() {
