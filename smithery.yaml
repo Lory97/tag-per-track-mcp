@@ -1,0 +1,43 @@
+# Smithery configuration for Tag-per-Track MCP Server
+# Specification: https://smithery.ai/docs
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required:
+      - privateKey
+    properties:
+      privateKey:
+        type: string
+        title: "Base Burner Wallet Private Key"
+        description: "66-character hex private key starting with 0x (dedicated burner wallet funded with USDC on Base network)"
+      maxSpendingUsdc:
+        type: string
+        title: "Maximum Spending Cap (USDC)"
+        default: "0.20"
+        description: "Client-side safety limit in USDC per request (default: 0.20)"
+      apiUrl:
+        type: string
+        title: "API URL"
+        default: "https://api.tag-per-track.cloud/api/analyze"
+        description: "Tag-per-Track analysis API endpoint URL"
+      apiBaseUrl:
+        type: string
+        title: "API Base URL"
+        default: "https://api.tag-per-track.cloud/api"
+        description: "Tag-per-Track base API endpoint URL"
+    exampleConfig:
+      privateKey: "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      maxSpendingUsdc: "0.20"
+  commandFunction: |-
+    (config) => ({
+      command: 'node',
+      args: ['build/index.js'],
+      env: {
+        PRIVATE_KEY: config.privateKey,
+        ...(config.maxSpendingUsdc ? { MAX_SPENDING_USDC: String(config.maxSpendingUsdc) } : {}),
+        ...(config.apiUrl ? { API_URL: config.apiUrl } : {}),
+        ...(config.apiBaseUrl ? { API_BASE_URL: config.apiBaseUrl } : {})
+      }
+    })

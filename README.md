@@ -1,5 +1,9 @@
 # Tag-per-Track MCP Server
 
+[![smithery badge](https://smithery.ai/badge/@Lory97/tag-per-track-mcp)](https://smithery.ai/server/@Lory97/tag-per-track-mcp)
+[![npm version](https://img.shields.io/npm/v/tag-per-track-mcp.svg)](https://www.npmjs.com/package/tag-per-track-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 This project is a local **Model Context Protocol (MCP)** server that allows AI agents (like Claude) to analyze audio files via the **Tag-per-Track** API. The server automatically handles the micro-USDC payment process using the **x402** protocol on the **Base** network.
 
 ## 🎯 Vision
@@ -32,7 +36,21 @@ Enable an AI to "pay to listen" autonomously. When an AI agent wants to analyze 
 > Ensure your wallet has sufficient **USDC** on the **Base** network.  
 > ⚠️ **SECURITY ADVICE:** Never use your main vault wallet. Always use a dedicated "burner" or developer wallet funded with a few USDC. The private key remains strictly local to your machine and is never transmitted to our servers.
 
-## 🤖 Usage with Claude Desktop
+## 📦 Installation & Setup
+
+### ⚡ Option 1: Automatic installation via Smithery (Recommended)
+
+You can easily install Tag-per-Track MCP into your client using the [Smithery CLI](https://smithery.ai):
+
+```bash
+# For Claude Desktop
+npx -y @smithery/cli install @Lory97/tag-per-track-mcp --client claude
+
+# For Cursor
+npx -y @smithery/cli install @Lory97/tag-per-track-mcp --client cursor
+```
+
+### 🤖 Option 2: Manual Setup with Claude Desktop
 
 Add the following configuration to your `claude_desktop_config.json` file (typically in `~/Library/Application Support/Claude/` on macOS or `%APPDATA%\Claude\` on Windows):
 
