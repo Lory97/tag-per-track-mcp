@@ -73,21 +73,32 @@ export interface X402Requirements {
     extra?: any;
 }
 
+export interface AiDetectionResult {
+    checked: boolean;
+    isAi: boolean;
+    confidence: number;
+    verdict: 'HUMAN' | 'AI_GENERATED' | 'UNCERTAIN';
+    status?: string;
+}
+
 export interface AudioAnalysisResult {
     bpm?: number;
     key?: string;
     scale?: string;
+    duration?: number;
     genres?: Array<{ label: string; score: number }> | string[];
     moods?: Array<{ label: string; score: number }> | string[];
     instruments?: Array<{ label: string; score: number }> | string[];
     lyrics?: string;
+    aiDetection?: AiDetectionResult;
+    ai_detection?: AiDetectionResult;
     [key: string]: any;
 }
 
 const MAX_LOCAL_FILE_SIZE = 50 * 1024 * 1024; // 50 MB limit
 
-// Default max spending limit: 0.20 USDC (USDC uses 6 decimals on Base: 200,000 units = 0.20 USDC)
-const DEFAULT_MAX_SPENDING_USDC = 200_000n;
+// Default max spending limit: 0.50 USDC (USDC uses 6 decimals on Base: 500,000 units = 0.50 USDC)
+const DEFAULT_MAX_SPENDING_USDC = 500_000n;
 
 // EIP-3009 authorization valid for 5 minutes (300 seconds) instead of 1 hour
 const EIP3009_VALIDITY_SECONDS = 300;
@@ -214,7 +225,7 @@ export async function compressAudioIfHeavy(
 }
 
 /**
- * Reads the configured maximum spending limit or defaults to 0.20 USDC.
+ * Reads the configured maximum spending limit or defaults to 0.50 USDC.
  */
 export function getMaxSpendingCap(): bigint {
     if (process.env.MAX_SPENDING_USDC) {

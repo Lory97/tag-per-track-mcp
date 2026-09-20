@@ -15,8 +15,8 @@ startCommand:
       maxSpendingUsdc:
         type: string
         title: "Maximum Spending Cap (USDC)"
-        default: "0.20"
-        description: "Client-side safety limit in USDC per request (default: 0.20)"
+        default: "0.50"
+        description: "Client-side safety limit in USDC per request (default: 0.50)"
       apiUrl:
         type: string
         title: "API URL"
@@ -29,7 +29,7 @@ startCommand:
         description: "Tag-per-Track base API endpoint URL"
     exampleConfig:
       privateKey: "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-      maxSpendingUsdc: "0.20"
+      maxSpendingUsdc: "0.50"
   commandFunction: |-
     (config) => ({
       command: 'node',

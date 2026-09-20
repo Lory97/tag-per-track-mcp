@@ -87,7 +87,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "analyze_audio",
-        description: "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments) and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: This tool automatically executes a micro-payment (0.05 USDC for standard analysis, or 0.10 USDC when extractLyrics is enabled) via the x402 protocol on Base.",
+        description: "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments), AI music detection verdict (HUMAN vs AI_GENERATED Suno/Udio neural vocoder risk with confidence index in 'ai_detection'), and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: This tool automatically executes a micro-payment (0.15 USDC for standard analysis, or 0.25 USDC when extractLyrics is enabled) via the x402 protocol on Base.",
         inputSchema: {
           type: "object",
           properties: {
@@ -101,14 +101,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             extractLyrics: {
               type: "boolean",
-              description: "Optional: Set to true to transcribe and extract vocal lyrics in addition to metadata. Costs 0.10 USDC instead of 0.05 USDC."
+              description: "Optional: Set to true to transcribe and extract vocal lyrics in addition to metadata. Costs 0.25 USDC instead of 0.15 USDC."
             }
           }
         }
       },
       {
         name: "analyze_audio_with_lyrics",
-        description: "Analyzes an audio track to extract complete musical metadata AND transcribe full vocal lyrics using AI. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: This tool automatically executes a micro-payment of 0.10 USDC via the x402 protocol on Base. (Alias for analyze_audio with extractLyrics: true).",
+        description: "Analyzes an audio track to extract complete musical metadata, AI-generated music detection verdict (HUMAN vs AI_GENERATED Suno/Udio), AND transcribe full vocal lyrics using AI. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: This tool automatically executes a micro-payment of 0.25 USDC via the x402 protocol on Base. (Alias for analyze_audio with extractLyrics: true).",
         inputSchema: {
           type: "object",
           properties: {
@@ -145,7 +145,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                   },
                   extractLyrics: {
                     type: "boolean",
-                    description: "Whether to extract vocal lyrics for this specific track (costs 0.10 USDC instead of 0.05 USDC)."
+                    description: "Whether to extract vocal lyrics for this specific track (costs 0.25 USDC instead of 0.15 USDC)."
                   }
                 }
               }
@@ -162,7 +162,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             extractLyrics: {
               type: "boolean",
-              description: "Optional global flag: set to true to transcribe and extract vocal lyrics for all tracks in this batch (0.10 USDC per track). Default is false (0.05 USDC per track)."
+              description: "Optional global flag: set to true to transcribe and extract vocal lyrics for all tracks in this batch (0.25 USDC per track). Default is false (0.15 USDC per track)."
             },
             concurrency: {
               type: "number",
@@ -413,7 +413,7 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
           },
           {
             name: "extract_lyrics",
-            description: "Set to 'true' to transcribe full vocal lyrics using AI Whisper and evaluate lyrical themes (costs 0.10 USDC instead of 0.05 USDC)",
+            description: "Set to 'true' to transcribe full vocal lyrics using AI Whisper and evaluate lyrical themes (costs 0.25 USDC instead of 0.15 USDC)",
             required: false
           },
           {
@@ -472,8 +472,9 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
               `Execute the following qualification protocol using the Tag-per-Track MCP tools:\n` +
               `1. Acoustic Signal Analysis: Invoke \`analyze_audio\` on "${source}" (with extractLyrics: ${extractLyrics ? 'true' : 'false'}).\n` +
               `${artistInstruction}` +
-              `3. Executive A&R Synthesis: Synthesize the acoustic data and streaming traction into an "A&R Executive Memo" structured as follows:\n` +
+              `3. Executive A&R Synthesis: Synthesize the acoustic data, AI detection verdict, and streaming traction into an "A&R Executive Memo" structured as follows:\n` +
               `   - 🎧 Acoustic Fingerprint: BPM, Key & Scale (harmonic mixing compatibility), Dominant Moods, Classified Genres & Sub-genres with confidence ratings, and Detected Instruments.\n` +
+              `   - 🛡️ Origin Integrity: AI-generated music verdict (ai_detection: HUMAN authentic vs AI_GENERATED Suno/Udio risk, with confidence rating).\n` +
               (extractLyrics ? `   - 📝 Lyrical Analysis: Key themes, hook memorability, and vocal presence.\n` : ``) +
               `${tractionSection}` +
               `   - 💎 Hybrid A&R Score & Tier: Classify the profile (Emerging Gem: <50k listeners with strong acoustic score, Rising Talent, or Established Artist) with a 0-100 viability score.\n` +
