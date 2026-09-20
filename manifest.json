@@ -71,5 +71,45 @@
     "base",
     "usdc",
     "ai-agent"
+  ],
+  "tools": [
+    {
+      "name": "analyze_audio",
+      "description": "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments) and optionally vocal lyrics with x402 USDC micro-payments on Base."
+    },
+    {
+      "name": "analyze_audio_with_lyrics",
+      "description": "Analyzes an audio track to extract complete musical metadata AND transcribe full vocal lyrics using AI Whisper with x402 USDC micro-payments on Base."
+    },
+    {
+      "name": "analyze_audio_batch",
+      "description": "Analyzes multiple music tracks or audio files in parallel (batch processing) with x402 USDC micro-payments on Base."
+    },
+    {
+      "name": "lookup_artist_stats",
+      "description": "Retrieves streaming traction and commercial metrics for an artist (Spotify monthly listeners, followers, popularity score) for A&R qualification."
+    }
+  ],
+  "prompts": [
+    {
+      "name": "qualify_demo_ar",
+      "description": "Comprehensive A&R demo evaluation for record labels combining Essentia acoustic analysis with real-time Spotify streaming traction.",
+      "arguments": [
+        "audio_source",
+        "artist_name",
+        "extract_lyrics",
+        "curation_focus"
+      ],
+      "text": "Qualify the track at {{audio_source}} for record label A&R signing decision."
+    },
+    {
+      "name": "batch_demo_screening",
+      "description": "Screens an EP, album, or folder of demo submissions in parallel, evaluating energy flow, harmonic key progression, and selecting standout lead singles.",
+      "arguments": [
+        "audio_sources",
+        "screening_goal"
+      ],
+      "text": "Screen the batch of audio_sources in parallel."
+    }
   ]
 }
