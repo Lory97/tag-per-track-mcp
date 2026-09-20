@@ -75,41 +75,160 @@
   "tools": [
     {
       "name": "analyze_audio",
-      "description": "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments) and optionally vocal lyrics with x402 USDC micro-payments on Base."
+      "description": "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments) and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: This tool automatically executes a micro-payment (0.05 USDC for standard analysis, or 0.10 USDC when extractLyrics is enabled) via the x402 protocol on Base.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string",
+            "description": "Path to a local audio file on disk (.mp3, .wav, .ogg, .flac, .m4a, .aac, .aiff). Use this whenever analyzing a local file, recording, or email attachment saved locally."
+          },
+          "fileUrl": {
+            "type": "string",
+            "description": "The direct publicly accessible URL (HTTP/HTTPS or IPFS) of the audio file to analyze."
+          },
+          "extractLyrics": {
+            "type": "boolean",
+            "description": "Optional: Set to true to transcribe and extract vocal lyrics in addition to metadata. Costs 0.10 USDC instead of 0.05 USDC."
+          }
+        }
+      }
     },
     {
       "name": "analyze_audio_with_lyrics",
-      "description": "Analyzes an audio track to extract complete musical metadata AND transcribe full vocal lyrics using AI Whisper with x402 USDC micro-payments on Base."
+      "description": "Analyzes an audio track to extract complete musical metadata AND transcribe full vocal lyrics using AI. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: This tool automatically executes a micro-payment of 0.10 USDC via the x402 protocol on Base. (Alias for analyze_audio with extractLyrics: true).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string",
+            "description": "Path to a local audio file on disk (.mp3, .wav, .ogg, .flac, .m4a, .aac, .aiff). Use this whenever analyzing a local file, recording, or email attachment saved locally."
+          },
+          "fileUrl": {
+            "type": "string",
+            "description": "The direct publicly accessible URL (HTTP/HTTPS or IPFS) of the audio file to analyze."
+          }
+        }
+      }
     },
     {
       "name": "analyze_audio_batch",
-      "description": "Analyzes multiple music tracks or audio files in parallel (batch processing) with x402 USDC micro-payments on Base."
+      "description": "Analyzes multiple music tracks or audio files in parallel (batch processing). Vastly reduces total execution time compared to sequential processing. Accepts a list of local file paths ('filePaths') or remote URLs ('fileUrls'), or a structured array of 'tracks'. Executes micro-payments per track on Base via x402.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tracks": {
+            "type": "array",
+            "description": "Array of audio items to analyze in parallel. Each item can specify 'filePath' or 'fileUrl' and optional per-track 'extractLyrics'.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "filePath": {
+                  "type": "string",
+                  "description": "Path to a local audio file on disk."
+                },
+                "fileUrl": {
+                  "type": "string",
+                  "description": "Direct public URL of the audio file."
+                },
+                "extractLyrics": {
+                  "type": "boolean",
+                  "description": "Whether to extract vocal lyrics for this specific track (costs 0.10 USDC instead of 0.05 USDC)."
+                }
+              }
+            }
+          },
+          "filePaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Convenience shortcut: list of local audio file paths to analyze in parallel."
+          },
+          "fileUrls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Convenience shortcut: list of remote audio URLs to analyze in parallel."
+          },
+          "extractLyrics": {
+            "type": "boolean",
+            "description": "Optional global flag: set to true to transcribe and extract vocal lyrics for all tracks in this batch (0.10 USDC per track). Default is false (0.05 USDC per track)."
+          },
+          "concurrency": {
+            "type": "number",
+            "description": "Maximum number of simultaneous parallel requests (1 to 5, default is 4 to respect API rate limits)."
+          }
+        }
+      }
     },
     {
       "name": "lookup_artist_stats",
-      "description": "Retrieves streaming traction and commercial metrics for an artist (Spotify monthly listeners, followers, popularity score) for A&R qualification."
+      "description": "Retrieves streaming traction and commercial metrics for an artist (Spotify monthly listeners, followers, popularity score) for A&R qualification.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "artist_name": {
+            "type": "string",
+            "description": "Stage name of the artist to look up."
+          },
+          "social_links": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional social media profile links for future enrichment."
+          }
+        },
+        "required": [
+          "artist_name"
+        ]
+      }
     }
   ],
   "prompts": [
     {
       "name": "qualify_demo_ar",
-      "description": "Comprehensive A&R demo evaluation for record labels combining Essentia acoustic analysis with real-time Spotify streaming traction.",
+      "description": "Comprehensive A&R demo evaluation for record labels and music curators. Combines Essentia acoustic analysis (BPM, key, scale, moods, genres, instruments, lyrics) with real-time Spotify streaming traction (monthly listeners, popularity) to produce an A&R Executive Memo with an Emerging Gem verdict.",
       "arguments": [
-        "audio_source",
-        "artist_name",
-        "extract_lyrics",
-        "curation_focus"
-      ],
-      "text": "Qualify the track at {{audio_source}} for record label A&R signing decision."
+        {
+          "name": "audio_source",
+          "description": "Path to a local audio file on disk (.mp3, .wav, .flac, .m4a, .aiff) or remote public URL of the track",
+          "required": true
+        },
+        {
+          "name": "artist_name",
+          "description": "Artist or band stage name to cross-reference public streaming traction on Spotify (monthly listeners, followers, popularity score)",
+          "required": false
+        },
+        {
+          "name": "extract_lyrics",
+          "description": "Set to 'true' to transcribe full vocal lyrics using AI Whisper and evaluate lyrical themes (costs 0.10 USDC instead of 0.05 USDC)",
+          "required": false
+        },
+        {
+          "name": "curation_focus",
+          "description": "Curatorial objective: 'label_signing_decision', 'dsp_playlist_pitching', 'sync_licensing', or 'dj_radio_programming'",
+          "required": false
+        }
+      ]
     },
     {
       "name": "batch_demo_screening",
-      "description": "Screens an EP, album, or folder of demo submissions in parallel, evaluating energy flow, harmonic key progression, and selecting standout lead singles.",
+      "description": "Screens an EP, album, or folder of demo submissions in parallel using analyze_audio_batch. Evaluates energy flow, harmonic key progression, and selects standout lead singles.",
       "arguments": [
-        "audio_sources",
-        "screening_goal"
-      ],
-      "text": "Screen the batch of audio_sources in parallel."
+        {
+          "name": "audio_sources",
+          "description": "Comma-separated list or JSON array of local audio file paths or remote URLs to analyze in parallel",
+          "required": true
+        },
+        {
+          "name": "screening_goal",
+          "description": "Screening objective: 'lead_single_selection', 'tracklist_harmonic_sequencing', or 'demo_drop_filtering'",
+          "required": false
+        }
+      ]
     }
   ]
 }
