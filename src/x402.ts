@@ -100,6 +100,12 @@ const MAX_LOCAL_FILE_SIZE = 50 * 1024 * 1024; // 50 MB limit
 // Default max spending limit: 0.50 USDC (USDC uses 6 decimals on Base: 500,000 units = 0.50 USDC)
 const DEFAULT_MAX_SPENDING_USDC = 500_000n;
 
+export const PINNED_PLATFORM_WALLET = '0xD33906178569f35EFF2E1665A14b06b455fF531F';
+export const APPROVED_USDC_CONTRACTS = new Set([
+    '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'.toLowerCase(), // Base Mainnet
+    '0x036CbD53842c5426634e7929541eC2318f3dCF7e'.toLowerCase(), // Base Sepolia
+]);
+
 // EIP-3009 authorization valid for 5 minutes (300 seconds) instead of 1 hour
 const EIP3009_VALIDITY_SECONDS = 300;
 
@@ -468,6 +474,22 @@ export async function analyzeAudio(
             throw new Error("Incomplete payment terms in x402 response (missing asset or payTo address).");
         }
 
+        // Security check: Validate pinned platform wallet recipient
+        const expectedPayTo = (process.env.PLATFORM_WALLET || PINNED_PLATFORM_WALLET).toLowerCase();
+        if (accept.payTo.toLowerCase() !== expectedPayTo) {
+            throw new Error(
+                `Security error: Divergent receiving wallet address detected: server requested payment to "${accept.payTo}", but expected pinned platform wallet is "${expectedPayTo}". Aborting transaction.`
+            );
+        }
+
+        // Security check: Validate approved USDC asset contract
+        const normalizedAsset = accept.asset.toLowerCase();
+        if (!APPROVED_USDC_CONTRACTS.has(normalizedAsset)) {
+            throw new Error(
+                `Security error: Unrecognized asset contract "${accept.asset}". Expected official USDC contract address. Aborting transaction.`
+            );
+        }
+
         // 3. Enforce Financial Spending Cap & Security Guards
         const rawAmount = accept.amount || accept.maxAmountRequired;
         if (!rawAmount) {
@@ -563,7 +585,6 @@ export async function analyzeAudio(
         // 7. Secondary Call with PAYMENT-SIGNATURE header & deferred file read
         const headers: Record<string, string> = {
             'PAYMENT-SIGNATURE': paymentProof,
-            'X-Payment-Proof': paymentProof // Kept for backwards compatibility
         };
 
         let body: BodyInit;

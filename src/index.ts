@@ -26,22 +26,16 @@ try {
 }
 
 // 1. Resolve & Validate Private Key Lazily
-// Priority: environment variable PRIVATE_KEY (recommended) -> CLI argument (fallback)
+// Enforces environment variables (PRIVATE_KEY or TAG_PER_TRACK_PRIVATE_KEY) only.
+// CLI arguments are rejected to prevent secret exposure in process tables (ps aux).
 const PRIVATE_KEY_REGEX = /^0x[a-fA-F0-9]{64}$/;
 
 function getPrivateKey(): string {
-  let key = process.env.PRIVATE_KEY || process.env.TAG_PER_TRACK_PRIVATE_KEY;
-
-  if (!key) {
-    const cliArg = process.argv.find(arg => arg.startsWith('0x'));
-    if (cliArg) {
-      key = cliArg;
-    }
-  }
+  const key = process.env.PRIVATE_KEY || process.env.TAG_PER_TRACK_PRIVATE_KEY;
 
   if (!key) {
     throw new Error(
-      "[Tag-per-Track MCP] No private key provided. Please set the PRIVATE_KEY environment variable (or provide a 0x... CLI argument) to sign x402 USDC micro-payments on Base."
+      "[Tag-per-Track MCP] No private key provided. Please set the PRIVATE_KEY environment variable to sign x402 USDC micro-payments on Base."
     );
   }
 
@@ -54,7 +48,7 @@ function getPrivateKey(): string {
   return key;
 }
 
-const initialPrivateKey = process.env.PRIVATE_KEY || process.env.TAG_PER_TRACK_PRIVATE_KEY || process.argv.find(arg => arg.startsWith('0x'));
+const initialPrivateKey = process.env.PRIVATE_KEY || process.env.TAG_PER_TRACK_PRIVATE_KEY;
 if (!initialPrivateKey) {
   console.error(
     "[Tag-per-Track MCP] Notice: Server started without a PRIVATE_KEY. Tools discovery is active; monetized tools will require PRIVATE_KEY when invoked."
