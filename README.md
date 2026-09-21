@@ -73,21 +73,6 @@ Add the following configuration to your `claude_desktop_config.json` file (typic
 }
 ```
 
-### Legacy CLI Argument (Fallback):
-```json
-{
-  "mcpServers": {
-    "tag-per-track": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "tag-per-track-mcp@latest",
-        "0xYOUR_BURNER_WALLET_PRIVATE_KEY_HERE"
-      ]
-    }
-  }
-}
-```
 
 ## 🔧 MCP Tools
 

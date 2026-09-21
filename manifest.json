@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "tag-per-track",
   "display_name": "Tag-per-Track",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Agentic-first audio analysis, AI music detection and music tagging with x402 USDC micro-payments on Base.",
   "author": {
     "name": "Lory Ferrand"
