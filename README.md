@@ -24,37 +24,24 @@ Enable an AI to "pay to listen" autonomously. When an AI agent wants to analyze 
 
 ## ⚙️ Configuration & Environment Variables
 
-| Variable | Description | Default |
-|---|---|---|
-| `PRIVATE_KEY` | **Recommended:** Private key of your Base burner wallet (66 hex characters starting with `0x`). | None (Required) |
-| `MAX_SPENDING_USDC` | Client-side spending cap per request in USDC. | `0.50` |
-| `API_URL` | Endpoint of the Tag-per-Track analysis API. | `https://api.tag-per-track.cloud/api/analyze` |
-| `API_BASE_URL` | Base endpoint of the Tag-per-Track API for auxiliary routes (e.g. artist stats). | `https://api.tag-per-track.cloud/api` |
+The MCP server supports **Dual Authentication**:
 
+| Variable | Mode | Description | Default |
+|---|---|---|---|
+| `TAG_PER_TRACK_API_KEY` | **SaaS (Priority 1)** | Studio API Key (`tpt_live_...`) generated on [tag-per-track.cloud](https://tag-per-track.cloud). Consumes prepaid Stripe credits without any crypto wallet. | None |
+| `WALLET_PRIVATE_KEY` / `PRIVATE_KEY` | **Web3 (Priority 2)** | Private key of your Base burner wallet (66 hex chars starting with `0x`) for on-chain USDC micro-payments via x402 v2. | None |
+| `MAX_SPENDING_USDC` | Web3 Safety | Client-side spending cap per request in USDC (default: 0.50). | `0.50` |
+| `API_URL` | Global | Endpoint of the Tag-per-Track analysis API. | `https://api.tag-per-track.cloud/api/analyze` |
+| `API_BASE_URL` | Global | Base endpoint of the Tag-per-Track API for auxiliary routes (e.g. artist stats). | `https://api.tag-per-track.cloud/api` |
 
-> [!IMPORTANT]
-> Ensure your wallet has sufficient **USDC** on the **Base** network.  
-> ⚠️ **SECURITY ADVICE:** Never use your main vault wallet. Always use a dedicated "burner" or developer wallet funded with a few USDC. The private key remains strictly local to your machine and is never transmitted to our servers.
+---
 
 ## 📦 Installation & Setup
 
-### ⚡ Option 1: Automatic installation via Smithery (Recommended)
+### 🤖 Option 1: Claude Desktop (Studio SaaS - Zero Crypto, Recommended for A&R)
 
-You can easily install Tag-per-Track MCP into your client using the [Smithery CLI](https://smithery.ai):
+Add the server to your `claude_desktop_config.json` (located at `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS or `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
 
-```bash
-# For Claude Desktop
-npx -y @smithery/cli install @Lory97/tag-per-track-mcp --client claude
-
-# For Cursor
-npx -y @smithery/cli install @Lory97/tag-per-track-mcp --client cursor
-```
-
-### 🤖 Option 2: Manual Setup with Claude Desktop
-
-Add the following configuration to your `claude_desktop_config.json` file (typically in `~/Library/Application Support/Claude/` on macOS or `%APPDATA%\Claude\` on Windows):
-
-### Recommended (Secure via `env`):
 ```json
 {
   "mcpServers": {
@@ -65,12 +52,42 @@ Add the following configuration to your `claude_desktop_config.json` file (typic
         "tag-per-track-mcp@latest"
       ],
       "env": {
-        "PRIVATE_KEY": "0xYOUR_BURNER_WALLET_PRIVATE_KEY_HERE",
+        "TAG_PER_TRACK_API_KEY": "tpt_live_YOUR_STUDIO_API_KEY_HERE"
+      }
+    }
+  }
+}
+```
+*Note: Generate your Studio API key in 1 click from your Dashboard at [https://tag-per-track.cloud](https://tag-per-track.cloud).*
+
+### ⚡ Option 2: Claude Desktop (Web3 x402 USDC on Base)
+
+```json
+{
+  "mcpServers": {
+    "tag-per-track": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "tag-per-track-mcp@latest"
+      ],
+      "env": {
+        "WALLET_PRIVATE_KEY": "0xYOUR_BURNER_WALLET_PRIVATE_KEY_HERE",
         "MAX_SPENDING_USDC": "0.50"
       }
     }
   }
 }
+```
+
+### 🌐 Option 3: Smithery CLI
+
+```bash
+# For Claude Desktop
+npx -y @smithery/cli install @Lory97/tag-per-track-mcp --client claude
+
+# For Cursor
+npx -y @smithery/cli install @Lory97/tag-per-track-mcp --client cursor
 ```
 
 

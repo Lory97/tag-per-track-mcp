@@ -11,7 +11,7 @@ import {
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import * as dotenv from 'dotenv';
-import { analyzeAudio, analyzeAudioBatch, type BatchTrackItem } from './x402.js';
+import { analyzeAudio, analyzeAudioBatch, type BatchTrackItem, type AuthConfig } from './x402.js';
 
 dotenv.config({ quiet: true });
 
@@ -25,37 +25,53 @@ try {
   // fallback to 1.2.3
 }
 
-// 1. Resolve & Validate Private Key Lazily
-// Enforces environment variables (PRIVATE_KEY or TAG_PER_TRACK_PRIVATE_KEY) only.
-// CLI arguments are rejected to prevent secret exposure in process tables (ps aux).
+// 1. Resolve Authentication Mode Lazily
+// Priority 1: TAG_PER_TRACK_API_KEY (Studio SaaS credits, zero-crypto)
+// Priority 2: WALLET_PRIVATE_KEY (x402 USDC micro-payments on Base)
+export type AuthMode =
+  | { type: 'API_KEY'; apiKey: string }
+  | { type: 'PRIVATE_KEY'; privateKey: string }
+  | { type: 'NONE' };
+
 const PRIVATE_KEY_REGEX = /^0x[a-fA-F0-9]{64}$/;
 
-function getPrivateKey(): string {
-  const key = process.env.PRIVATE_KEY || process.env.TAG_PER_TRACK_PRIVATE_KEY;
-
-  if (!key) {
-    throw new Error(
-      "[Tag-per-Track MCP] No private key provided. Please set the PRIVATE_KEY environment variable to sign x402 USDC micro-payments on Base."
-    );
+export function resolveAuthMode(): AuthMode {
+  // Priority 1: TAG_PER_TRACK_API_KEY
+  const apiKey = process.env.TAG_PER_TRACK_API_KEY;
+  if (apiKey && apiKey.trim()) {
+    return { type: 'API_KEY', apiKey: apiKey.trim() };
   }
 
-  if (!PRIVATE_KEY_REGEX.test(key)) {
-    throw new Error(
-      "[Tag-per-Track MCP] Invalid private key format. The private key must be a 66-character hexadecimal string starting with '0x'."
-    );
+  // Priority 2: WALLET_PRIVATE_KEY (also backward-compatible with PRIVATE_KEY & TAG_PER_TRACK_PRIVATE_KEY)
+  const privateKey =
+    process.env.WALLET_PRIVATE_KEY ||
+    process.env.PRIVATE_KEY ||
+    process.env.TAG_PER_TRACK_PRIVATE_KEY;
+  if (privateKey && privateKey.trim()) {
+    return { type: 'PRIVATE_KEY', privateKey: privateKey.trim() };
   }
 
-  return key;
+  return { type: 'NONE' };
 }
 
-const initialPrivateKey = process.env.PRIVATE_KEY || process.env.TAG_PER_TRACK_PRIVATE_KEY;
-if (!initialPrivateKey) {
+const initialAuth = resolveAuthMode();
+if (initialAuth.type === 'API_KEY') {
   console.error(
-    "[Tag-per-Track MCP] Notice: Server started without a PRIVATE_KEY. Tools discovery is active; monetized tools will require PRIVATE_KEY when invoked."
+    "[Tag-per-Track MCP] Authenticated via Studio API Key (TAG_PER_TRACK_API_KEY). x402 on-chain wallet signing disabled."
   );
-} else if (!PRIVATE_KEY_REGEX.test(initialPrivateKey)) {
+} else if (initialAuth.type === 'PRIVATE_KEY') {
+  if (!PRIVATE_KEY_REGEX.test(initialAuth.privateKey)) {
+    console.error(
+      "[Tag-per-Track MCP] Warning: The provided private key does not match the 66-character hex format starting with '0x'."
+    );
+  } else {
+    console.error(
+      "[Tag-per-Track MCP] Authenticated via EVM Wallet (x402 USDC micro-payments on Base)."
+    );
+  }
+} else {
   console.error(
-    "[Tag-per-Track MCP] Warning: The provided PRIVATE_KEY does not match the 66-character hex format starting with '0x'."
+    "[Tag-per-Track MCP] Notice: Server started without authentication. Tools discovery is active; monetized analysis tools will require TAG_PER_TRACK_API_KEY or WALLET_PRIVATE_KEY when invoked."
   );
 }
 
@@ -81,7 +97,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "analyze_audio",
-        description: "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments), AI music detection verdict (HUMAN vs AI_GENERATED Suno/Udio neural vocoder risk with confidence index in 'ai_detection'), and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: This tool automatically executes a micro-payment (0.15 USDC for standard analysis, or 0.25 USDC when extractLyrics is enabled) via the x402 protocol on Base.",
+        description: "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments), AI music detection verdict (HUMAN vs AI_GENERATED Suno/Udio neural vocoder risk with confidence index in 'ai_detection'), and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY (1 credit, or 2 credits with extractLyrics) or Web3 x402 micro-payment on Base (0.15 USDC, or 0.25 USDC with extractLyrics).",
         inputSchema: {
           type: "object",
           properties: {
@@ -95,14 +111,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             extractLyrics: {
               type: "boolean",
-              description: "Optional: Set to true to transcribe and extract vocal lyrics in addition to metadata. Costs 0.25 USDC instead of 0.15 USDC."
+              description: "Optional: Set to true to transcribe and extract vocal lyrics in addition to metadata. Costs 2 studio credits or 0.25 USDC instead of 1 credit / 0.15 USDC."
             }
           }
         }
       },
       {
         name: "analyze_audio_with_lyrics",
-        description: "Analyzes an audio track to extract complete musical metadata, AI-generated music detection verdict (HUMAN vs AI_GENERATED Suno/Udio), AND transcribe full vocal lyrics using AI. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: This tool automatically executes a micro-payment of 0.25 USDC via the x402 protocol on Base. (Alias for analyze_audio with extractLyrics: true).",
+        description: "Analyzes an audio track to extract complete musical metadata, AI-generated music detection verdict (HUMAN vs AI_GENERATED Suno/Udio), AND transcribe full vocal lyrics using AI. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY (2 credits) or Web3 x402 micro-payment of 0.25 USDC on Base. (Alias for analyze_audio with extractLyrics: true).",
         inputSchema: {
           type: "object",
           properties: {
@@ -119,7 +135,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "analyze_audio_batch",
-        description: "Analyzes multiple music tracks or audio files in parallel (batch processing). Vastly reduces total execution time compared to sequential processing. Accepts a list of local file paths ('filePaths') or remote URLs ('fileUrls'), or a structured array of 'tracks'. Executes micro-payments per track on Base via x402.",
+        description: "Analyzes multiple music tracks or audio files in parallel (batch processing). Vastly reduces total execution time compared to sequential processing. Accepts a list of local file paths ('filePaths') or remote URLs ('fileUrls'), or a structured array of 'tracks'. Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY or Web3 x402 micro-payments on Base.",
         inputSchema: {
           type: "object",
           properties: {
@@ -303,11 +319,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       throw new Error("Missing tracks for batch: Please provide 'tracks', 'filePaths', or 'fileUrls' array.");
     }
 
+    const auth = resolveAuthMode();
+    if (auth.type === 'NONE') {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: "Error: No authentication configured for Tag-per-Track. Please define either TAG_PER_TRACK_API_KEY (from https://tag-per-track.cloud) or WALLET_PRIVATE_KEY in your MCP configuration."
+          }
+        ]
+      };
+    }
+
     try {
-      const key = getPrivateKey();
       const batchResult = await analyzeAudioBatch(
         tracksToProcess,
-        key,
+        auth,
         API_URL,
         Boolean(args.extractLyrics),
         args.concurrency || 4
@@ -322,12 +350,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         ]
       };
     } catch (error: any) {
+      const rawError = error?.message || String(error);
       return {
         isError: true,
         content: [
           {
             type: "text",
-            text: `Error executing batch analysis: ${error?.message || String(error)}`
+            text: `Error executing batch analysis: ${rawError}`
           }
         ]
       };
@@ -350,9 +379,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   const shouldExtractLyrics = toolName === "analyze_audio_with_lyrics" || Boolean(extractLyrics);
 
+  const auth = resolveAuthMode();
+  if (auth.type === 'NONE') {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "Error: No authentication configured for Tag-per-Track. Please define either TAG_PER_TRACK_API_KEY (from https://tag-per-track.cloud) or WALLET_PRIVATE_KEY in your MCP configuration."
+        }
+      ]
+    };
+  }
+
   try {
-    const key = getPrivateKey();
-    const data = await analyzeAudio({ filePath, fileUrl }, key, API_URL, shouldExtractLyrics);
+    const data = await analyzeAudio({ filePath, fileUrl }, auth, API_URL, shouldExtractLyrics);
     return {
       content: [
         {
@@ -363,6 +404,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   } catch (error: any) {
     const rawError = error?.message || String(error);
+
+    if (rawError.includes("Insufficient studio credits")) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Error analyzing track: ${rawError}`
+          }
+        ]
+      };
+    }
+
     let contextualHelp = "";
 
     if (rawError.includes("[Security Guard]")) {

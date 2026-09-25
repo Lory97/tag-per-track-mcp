@@ -14,6 +14,10 @@ export interface AudioInput {
     filePath?: string;
 }
 
+export type AuthConfig =
+    | { type: 'API_KEY'; apiKey: string }
+    | { type: 'PRIVATE_KEY'; privateKey: string };
+
 export interface BatchTrackItem {
     filePath?: string;
     fileUrl?: string;
@@ -313,18 +317,20 @@ export function buildTargetUrl(apiUrl: string, extractLyrics: boolean): string {
  * Supports both remote URLs (fileUrl) and local binary files (filePath).
  * 
  * @param input Either a fileUrl/filePath string or an object with fileUrl or filePath.
- * @param privateKey Hex string representing the private key (validated 64-hex char).
+ * @param auth AuthConfig object or private key / API key string.
  * @param apiUrl The Tag-per-Track API base URL.
  * @param extractLyrics Whether to extract vocal lyrics in addition to metadata.
  * @returns The analysis result JSON.
  */
 export async function analyzeAudio(
     input: string | AudioInput,
-    privateKey: string,
+    auth: AuthConfig | string,
     apiUrl: string,
     extractLyrics: boolean = false
 ): Promise<AudioAnalysisResult> {
-    const account = privateKeyToAccount(privateKey as Hex);
+    const resolvedAuth: AuthConfig = typeof auth === 'string'
+        ? (auth.startsWith('tpt_live_') ? { type: 'API_KEY', apiKey: auth } : { type: 'PRIVATE_KEY', privateKey: auth })
+        : auth;
 
     // Resolve input parameters
     let fileUrl: string | undefined;
@@ -409,6 +415,87 @@ export async function analyzeAudio(
     console.error(`[Tag-per-Track MCP] Target endpoint: ${targetUrl}`);
 
     try {
+        // Priority 1: Studio SaaS API Key Flow (direct request without viem wallet or x402 challenge)
+        if (resolvedAuth.type === 'API_KEY') {
+            const headers: Record<string, string> = {
+                'Authorization': `Bearer ${resolvedAuth.apiKey.trim()}`,
+            };
+
+            if (process.env.TAG_PER_TRACK_NO_PERSIST === 'true' || process.env.TAG_PER_TRACK_NO_PERSIST === '1') {
+                headers['x-no-persist'] = '1';
+            }
+
+            let body: BodyInit;
+            if (localFileMeta) {
+                const buffer = await fs.promises.readFile(localFileMeta.resolvedPath);
+                const formData = new FormData();
+                const blob = new Blob([buffer], { type: localFileMeta.mimeType });
+                formData.append('file', blob, localFileMeta.filename);
+                body = formData;
+            } else {
+                headers['Content-Type'] = 'application/json';
+                body = JSON.stringify({ fileUrl });
+            }
+
+            console.error(`[Tag-per-Track MCP] Submitting analysis via Studio API Key to ${targetUrl}...`);
+
+            let response: Response;
+            try {
+                response = await fetch(targetUrl, {
+                    method: 'POST',
+                    headers,
+                    body,
+                    signal: AbortSignal.timeout(120_000), // 120s timeout
+                });
+            } catch (networkError: any) {
+                if (networkError.name === 'TimeoutError') {
+                    throw new Error(`Audio analysis timed out after 120 seconds. The processing pipeline took longer than expected.`);
+                }
+                throw new Error(`Failed to transmit analysis request: ${networkError.message}`);
+            }
+
+            if (response.status === 402) {
+                let errorMsg = 'Insufficient studio credits. Please recharge your account at https://tag-per-track.cloud';
+                try {
+                    const errData = await response.json();
+                    if (errData?.error) errorMsg = errData.error;
+                    else if (errData?.message) errorMsg = errData.message;
+                } catch {}
+                throw new Error(errorMsg);
+            }
+
+            if (response.status === 401) {
+                let errorMsg = 'Invalid API key. Please check your API key from https://tag-per-track.cloud';
+                try {
+                    const errData = await response.json();
+                    if (errData?.error) errorMsg = errData.error;
+                    else if (errData?.message) errorMsg = errData.message;
+                } catch {}
+                throw new Error(errorMsg);
+            }
+
+            if (!response.ok) {
+                let errorMsg = `Analysis request failed (HTTP ${response.status})`;
+                try {
+                    const errData = await response.json();
+                    errorMsg = errData?.error || errData?.message || errorMsg;
+                } catch {
+                    try {
+                        const raw = await response.text();
+                        if (raw) errorMsg += `: ${raw.slice(0, 300)}`;
+                    } catch {}
+                }
+                throw new Error(errorMsg);
+            }
+
+            const result = await response.json();
+            console.error(`[Tag-per-Track MCP] Analysis completed successfully via Studio API Key.`);
+            return result.data;
+        }
+
+        // Priority 2: Web3 x402 Protocol Flow with viem account
+        const account = privateKeyToAccount(resolvedAuth.privateKey as Hex);
+
         // 1. Initial Request (Triggers 402 Payment Required) - 15s timeout
         const triggerBody = fileUrl ? { fileUrl } : { fileName: localFileMeta?.filename };
         let initialResponse: Response;
@@ -672,7 +759,7 @@ export async function runWithConcurrency<T, R>(
  */
 export async function analyzeAudioBatch(
     tracks: BatchTrackItem[],
-    privateKey: string,
+    auth: AuthConfig | string,
     apiUrl: string,
     globalExtractLyrics: boolean = false,
     concurrency: number = 4
@@ -696,7 +783,7 @@ export async function analyzeAudioBatch(
             try {
                 const data = await analyzeAudio(
                     { filePath: trackItem.filePath, fileUrl: trackItem.fileUrl },
-                    privateKey,
+                    auth,
                     apiUrl,
                     extractLyrics
                 );

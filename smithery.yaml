@@ -5,9 +5,11 @@ startCommand:
   type: stdio
   configSchema:
     type: object
-    required:
-      - privateKey
     properties:
+      apiKey:
+        type: string
+        title: "Tag-per-Track Studio API Key"
+        description: "Studio API key (tpt_live_...) linked to prepaid credits on https://tag-per-track.cloud (zero-crypto SaaS mode)"
       privateKey:
         type: string
         title: "Base Burner Wallet Private Key"
@@ -28,14 +30,14 @@ startCommand:
         default: "https://api.tag-per-track.cloud/api"
         description: "Tag-per-Track base API endpoint URL"
     exampleConfig:
-      privateKey: "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-      maxSpendingUsdc: "0.50"
+      apiKey: "tpt_live_0123456789abcdef0123456789abcdef"
   commandFunction: |-
     (config) => ({
       command: 'node',
       args: ['build/index.js'],
       env: {
-        PRIVATE_KEY: config.privateKey,
+        ...(config.apiKey ? { TAG_PER_TRACK_API_KEY: config.apiKey } : {}),
+        ...(config.privateKey ? { WALLET_PRIVATE_KEY: config.privateKey, PRIVATE_KEY: config.privateKey } : {}),
         ...(config.maxSpendingUsdc ? { MAX_SPENDING_USDC: String(config.maxSpendingUsdc) } : {}),
         ...(config.apiUrl ? { API_URL: config.apiUrl } : {}),
         ...(config.apiBaseUrl ? { API_BASE_URL: config.apiBaseUrl } : {})

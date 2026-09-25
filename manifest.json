@@ -22,6 +22,8 @@
         "${__dirname}/build/index.js"
       ],
       "env": {
+        "TAG_PER_TRACK_API_KEY": "${user_config.api_key}",
+        "WALLET_PRIVATE_KEY": "${user_config.private_key}",
         "PRIVATE_KEY": "${user_config.private_key}",
         "MAX_SPENDING_USDC": "${user_config.max_spending_usdc}",
         "API_URL": "${user_config.api_url}",
@@ -30,12 +32,19 @@
     }
   },
   "user_config": {
+    "api_key": {
+      "type": "string",
+      "title": "Tag-per-Track Studio API Key",
+      "description": "Studio API key (tpt_live_...) linked to prepaid credits on https://tag-per-track.cloud (zero-crypto SaaS mode)",
+      "sensitive": true,
+      "required": false
+    },
     "private_key": {
       "type": "string",
       "title": "Base Burner Wallet Private Key",
-      "description": "66-character hex private key starting with 0x (burner wallet funded with USDC on Base network)",
+      "description": "66-character hex private key starting with 0x (dedicated burner wallet funded with USDC on Base network)",
       "sensitive": true,
-      "required": true
+      "required": false
     },
     "max_spending_usdc": {
       "type": "string",
@@ -76,7 +85,7 @@
   "tools": [
     {
       "name": "analyze_audio",
-      "description": "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments), AI music detection verdict (HUMAN vs AI_GENERATED Suno/Udio neural vocoder risk with confidence index in 'ai_detection'), and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: This tool automatically executes a micro-payment (0.15 USDC for standard analysis, or 0.25 USDC when extractLyrics is enabled) via the x402 protocol on Base.",
+      "description": "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments), AI music detection verdict (HUMAN vs AI_GENERATED Suno/Udio neural vocoder risk with confidence index in 'ai_detection'), and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY (1 credit, or 2 credits with extractLyrics) or Web3 x402 micro-payment on Base (0.15 USDC, or 0.25 USDC with extractLyrics).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -90,14 +99,14 @@
           },
           "extractLyrics": {
             "type": "boolean",
-            "description": "Optional: Set to true to transcribe and extract vocal lyrics in addition to metadata. Costs 0.25 USDC instead of 0.15 USDC."
+            "description": "Optional: Set to true to transcribe and extract vocal lyrics in addition to metadata. Costs 2 studio credits or 0.25 USDC instead of 1 credit / 0.15 USDC."
           }
         }
       }
     },
     {
       "name": "analyze_audio_with_lyrics",
-      "description": "Analyzes an audio track to extract complete musical metadata, AI-generated music detection verdict (HUMAN vs AI_GENERATED Suno/Udio), AND transcribe full vocal lyrics using AI. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: This tool automatically executes a micro-payment of 0.25 USDC via the x402 protocol on Base. (Alias for analyze_audio with extractLyrics: true).",
+      "description": "Analyzes an audio track to extract complete musical metadata, AI-generated music detection verdict (HUMAN vs AI_GENERATED Suno/Udio), AND transcribe full vocal lyrics using AI. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY (2 credits) or Web3 x402 micro-payment of 0.25 USDC on Base. (Alias for analyze_audio with extractLyrics: true).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -114,7 +123,7 @@
     },
     {
       "name": "analyze_audio_batch",
-      "description": "Analyzes multiple music tracks or audio files in parallel (batch processing). Vastly reduces total execution time compared to sequential processing. Accepts a list of local file paths ('filePaths') or remote URLs ('fileUrls'), or a structured array of 'tracks'. Executes micro-payments per track on Base via x402.",
+      "description": "Analyzes multiple music tracks or audio files in parallel (batch processing). Vastly reduces total execution time compared to sequential processing. Accepts a list of local file paths ('filePaths') or remote URLs ('fileUrls'), or a structured array of 'tracks'. Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY or Web3 x402 micro-payments on Base.",
       "inputSchema": {
         "type": "object",
         "properties": {
