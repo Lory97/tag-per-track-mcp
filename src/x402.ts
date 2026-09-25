@@ -86,9 +86,9 @@ export interface AudioAnalysisResult {
     key?: string;
     scale?: string;
     duration?: number;
-    genres?: Array<{ label: string; score: number }> | string[];
-    moods?: Array<{ label: string; score: number }> | string[];
-    instruments?: Array<{ label: string; score: number }> | string[];
+    genres?: Array<{ label: string; score?: number; confidence?: number }> | string[];
+    moods?: Array<{ label: string; score?: number; confidence?: number }> | string[];
+    instruments?: Array<{ label: string; score?: number; confidence?: number }> | string[];
     lyrics?: string;
     aiDetection?: AiDetectionResult;
     ai_detection?: AiDetectionResult;
@@ -585,6 +585,7 @@ export async function analyzeAudio(
         // 7. Secondary Call with PAYMENT-SIGNATURE header & deferred file read
         const headers: Record<string, string> = {
             'PAYMENT-SIGNATURE': paymentProof,
+            'x-no-persist': '1',
         };
 
         let body: BodyInit;
