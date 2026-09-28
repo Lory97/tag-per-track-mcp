@@ -12,6 +12,9 @@ const execFileAsync = promisify(execFile);
 export interface AudioInput {
     fileUrl?: string;
     filePath?: string;
+    /** Optional artist / title hints (ID3 tags, email sender): stored with the analysis instead of the file name guess */
+    artist?: string;
+    trackTitle?: string;
 }
 
 export type AuthConfig =
@@ -22,6 +25,8 @@ export interface BatchTrackItem {
     filePath?: string;
     fileUrl?: string;
     extractLyrics?: boolean;
+    artist?: string;
+    trackTitle?: string;
 }
 
 export interface BatchTrackResult {
@@ -29,7 +34,7 @@ export interface BatchTrackResult {
     filePath?: string;
     fileUrl?: string;
     extractLyrics: boolean;
-    status: 'success' | 'error';
+    status: 'success' | 'error' | 'skipped';
     data?: AudioAnalysisResult;
     error?: string;
 }
@@ -38,8 +43,20 @@ export interface BatchAnalysisResponse {
     totalTracks: number;
     successful: number;
     failed: number;
+    /** Tracks never sent because the batch was halted (credits exhausted, invalid API key) */
+    skipped: number;
+    /** Why the remaining tracks were not sent, when the batch was halted */
+    haltReason?: string;
     concurrency: number;
     results: BatchTrackResult[];
+}
+
+/**
+ * Account-level failures: every following request would fail the same way,
+ * so the batch stops instead of uploading the remaining files for nothing.
+ */
+export function isAccountLevelFailure(message: string): boolean {
+    return /insufficient studio credits|invalid api key/i.test(message);
 }
 
 export interface CompressionResult {
@@ -83,6 +100,34 @@ export interface AiDetectionResult {
     confidence: number;
     verdict: 'HUMAN' | 'AI_GENERATED' | 'UNCERTAIN';
     status?: string;
+    generator?: string;
+    watermarkDetected?: boolean;
+}
+
+/** A&R scoring v2 returned by the API (see backend src/scoring/ar-scoring.ts) */
+export type ArProfile = 'discovery' | 'signing' | 'beatmaker';
+
+export interface ArReason {
+    code: string;
+    impact: 'positive' | 'negative' | 'neutral' | 'blocking';
+    value?: number | string;
+}
+
+export interface ArEvaluation {
+    version: string;
+    tier: 'unknown' | 'emerging' | 'rising' | 'established';
+    audioType: 'vocal' | 'instrumental' | 'unknown';
+    suggestedProfile: ArProfile;
+    marketplaceTags: string[];
+    aiGate: { blocked: boolean; uncertain: boolean; suspected?: boolean; reason?: ArReason };
+    subScores: Record<'production' | 'listening' | 'traction' | 'loyalty', { score: number | null; reasons: ArReason[] }>;
+    metrics: { monthlyListeners: number | null; followers: number | null; loyaltyRatio: number | null };
+    profiles: Record<ArProfile, {
+        score: number;
+        priority: 'top' | 'high' | 'medium' | 'low' | 'blocked';
+        isGem: boolean;
+        recommendation: string;
+    }>;
 }
 
 export interface AudioAnalysisResult {
@@ -94,12 +139,17 @@ export interface AudioAnalysisResult {
     moods?: Array<{ label: string; score?: number; confidence?: number }> | string[];
     instruments?: Array<{ label: string; score?: number; confidence?: number }> | string[];
     lyrics?: string;
+    /** Share of the analyzed window with a detected voice (0-1) */
+    voice?: { ratio: number };
     aiDetection?: AiDetectionResult;
     ai_detection?: AiDetectionResult;
+    arEvaluation?: ArEvaluation;
     [key: string]: any;
 }
 
-const MAX_LOCAL_FILE_SIZE = 50 * 1024 * 1024; // 50 MB limit
+const MAX_LOCAL_FILE_SIZE = 50 * 1024 * 1024; // 50 MB API upload limit, checked on the file actually sent
+// Source files may be larger: a 5-minute studio WAV (~50-80 MB) shrinks to ~5 MB once compressed
+const MAX_SOURCE_FILE_SIZE = 500 * 1024 * 1024;
 
 // Default max spending limit: 0.50 USDC (USDC uses 6 decimals on Base: 500,000 units = 0.50 USDC)
 const DEFAULT_MAX_SPENDING_USDC = 500_000n;
@@ -322,6 +372,20 @@ export function buildTargetUrl(apiUrl: string, extractLyrics: boolean): string {
  * @param extractLyrics Whether to extract vocal lyrics in addition to metadata.
  * @returns The analysis result JSON.
  */
+type TrackHints = { artist?: string; trackTitle?: string };
+
+function buildTrackHints(input: AudioInput): TrackHints {
+    const hints: TrackHints = {};
+    if (input.artist?.trim()) hints.artist = input.artist.trim();
+    if (input.trackTitle?.trim()) hints.trackTitle = input.trackTitle.trim();
+    return hints;
+}
+
+function appendTrackHints(formData: FormData, hints: TrackHints): void {
+    if (hints.artist) formData.append('artist', hints.artist);
+    if (hints.trackTitle) formData.append('trackTitle', hints.trackTitle);
+}
+
 export async function analyzeAudio(
     input: string | AudioInput,
     auth: AuthConfig | string,
@@ -347,6 +411,7 @@ export async function analyzeAudio(
         filePath = input.filePath ? input.filePath.trim() : undefined;
         fileUrl = input.fileUrl ? input.fileUrl.trim() : undefined;
     }
+    const trackHints = typeof input === 'string' ? {} : buildTrackHints(input);
 
     // If both are provided, prioritize the local file
     if (filePath && fileUrl) {
@@ -388,14 +453,21 @@ export async function analyzeAudio(
         if (!stat.isFile()) {
             throw new Error(`The provided path is not a regular file: "${filePath}"`);
         }
-        if (stat.size > MAX_LOCAL_FILE_SIZE) {
-            throw new Error(`File is too large (${(stat.size / 1024 / 1024).toFixed(2)} MB). Maximum allowed size is 50MB.`);
+        if (stat.size > MAX_SOURCE_FILE_SIZE) {
+            throw new Error(`File is too large (${(stat.size / 1024 / 1024).toFixed(2)} MB). Maximum source file size is 500MB.`);
         }
         const filename = path.basename(resolvedPath);
         const mimeType = getAudioMimeType(filename); // Throws if not a recognized audio extension
 
         // Selectively compress if heavy (> 15 MB) or uncompressed (.wav, .aiff)
         const compressed = await compressAudioIfHeavy(resolvedPath, filename, mimeType, stat.size);
+        if (compressed.size > MAX_LOCAL_FILE_SIZE) {
+            await compressed.cleanup();
+            throw new Error(
+                `File is too large (${(compressed.size / 1024 / 1024).toFixed(2)} MB${compressed.resolvedPath !== resolvedPath ? ' after compression' : ''}). ` +
+                `Maximum upload size is 50MB.`
+            );
+        }
         localFileMeta = {
             resolvedPath: compressed.resolvedPath,
             filename: compressed.filename,
@@ -431,10 +503,11 @@ export async function analyzeAudio(
                 const formData = new FormData();
                 const blob = new Blob([buffer], { type: localFileMeta.mimeType });
                 formData.append('file', blob, localFileMeta.filename);
+                appendTrackHints(formData, trackHints);
                 body = formData;
             } else {
                 headers['Content-Type'] = 'application/json';
-                body = JSON.stringify({ fileUrl });
+                body = JSON.stringify({ fileUrl, ...trackHints });
             }
 
             console.error(`[Tag-per-Track MCP] Submitting analysis via Studio API Key to ${targetUrl}...`);
@@ -682,10 +755,11 @@ export async function analyzeAudio(
             const formData = new FormData();
             const blob = new Blob([buffer], { type: localFileMeta.mimeType });
             formData.append('file', blob, localFileMeta.filename);
+            appendTrackHints(formData, trackHints);
             body = formData;
         } else {
             headers['Content-Type'] = 'application/json';
-            body = JSON.stringify({ fileUrl });
+            body = JSON.stringify({ fileUrl, ...trackHints });
         }
 
         let finalResponse: Response;
@@ -762,11 +836,22 @@ export async function analyzeAudioBatch(
     auth: AuthConfig | string,
     apiUrl: string,
     globalExtractLyrics: boolean = false,
-    concurrency: number = 4
+    concurrency: number = 4,
+    onItemDone?: (done: number, total: number, label: string, status: BatchTrackResult['status']) => void
 ): Promise<BatchAnalysisResponse> {
     const safeConcurrency = Math.min(Math.max(concurrency, 1), 5);
 
     console.error(`[Tag-per-Track MCP] Starting batch analysis of ${tracks.length} track(s) with concurrency ${safeConcurrency}...`);
+    let haltReason: string | undefined;
+    let doneCount = 0;
+    const reportDone = (label: string, status: BatchTrackResult['status']) => {
+        doneCount++;
+        try {
+            onItemDone?.(doneCount, tracks.length, label, status);
+        } catch {
+            // progress reporting must never break the batch
+        }
+    };
 
     const results = await runWithConcurrency(
         tracks,
@@ -780,13 +865,31 @@ export async function analyzeAudioBatch(
                 ? trackItem.extractLyrics
                 : globalExtractLyrics;
 
+            if (haltReason) {
+                reportDone(label, 'skipped');
+                return {
+                    track: label,
+                    filePath: trackItem.filePath,
+                    fileUrl: trackItem.fileUrl,
+                    extractLyrics,
+                    status: 'skipped' as const,
+                    error: `Not analyzed: ${haltReason}`
+                };
+            }
+
             try {
                 const data = await analyzeAudio(
-                    { filePath: trackItem.filePath, fileUrl: trackItem.fileUrl },
+                    {
+                        filePath: trackItem.filePath,
+                        fileUrl: trackItem.fileUrl,
+                        artist: trackItem.artist,
+                        trackTitle: trackItem.trackTitle,
+                    },
                     auth,
                     apiUrl,
                     extractLyrics
                 );
+                reportDone(label, 'success');
                 return {
                     track: label,
                     filePath: trackItem.filePath,
@@ -797,6 +900,12 @@ export async function analyzeAudioBatch(
                 };
             } catch (err: any) {
                 console.error(`[Tag-per-Track MCP] Batch item failed (${label}):`, err.message);
+                const message = err.message || String(err);
+                if (!haltReason && isAccountLevelFailure(message)) {
+                    haltReason = message;
+                    console.error(`[Tag-per-Track MCP] Batch halted: ${message}`);
+                }
+                reportDone(label, 'error');
                 return {
                     track: label,
                     filePath: trackItem.filePath,
@@ -811,13 +920,16 @@ export async function analyzeAudioBatch(
 
     const successful = results.filter(r => r.status === 'success').length;
     const failed = results.filter(r => r.status === 'error').length;
+    const skipped = results.filter(r => r.status === 'skipped').length;
 
-    console.error(`[Tag-per-Track MCP] Batch completed: ${successful} succeeded, ${failed} failed.`);
+    console.error(`[Tag-per-Track MCP] Batch completed: ${successful} succeeded, ${failed} failed, ${skipped} skipped.`);
 
     return {
         totalTracks: tracks.length,
         successful,
         failed,
+        skipped,
+        haltReason,
         concurrency: safeConcurrency,
         results
     };

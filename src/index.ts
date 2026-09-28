@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import * as dotenv from 'dotenv';
 import { analyzeAudio, analyzeAudioBatch, type BatchTrackItem, type AuthConfig } from './x402.js';
+import { triageDemoFolder, TRIAGE_DEFAULT_MAX_TRACKS, TRIAGE_HARD_MAX_TRACKS, type TriageProfile } from './triage.js';
 
 dotenv.config({ quiet: true });
 
@@ -97,7 +98,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "analyze_audio",
-        description: "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments), AI music detection verdict (HUMAN vs AI_GENERATED Suno/Udio neural vocoder risk with confidence index in 'ai_detection'), and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY (1 credit, or 2 credits with extractLyrics) or Web3 x402 micro-payment on Base (0.15 USDC, or 0.25 USDC with extractLyrics).",
+        description: "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments), AI music detection verdict (HUMAN vs AI_GENERATED Suno/Udio neural vocoder risk with confidence index in 'ai_detection'), explainable A&R scoring v2 in 'arEvaluation' (discovery / signing / beatmaker profiles, AI gate, vocal vs instrumental), and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY (1 credit, or 2 credits with extractLyrics) or Web3 x402 micro-payment on Base (0.15 USDC, or 0.25 USDC with extractLyrics).",
         inputSchema: {
           type: "object",
           properties: {
@@ -131,6 +132,49 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: "The direct publicly accessible URL (HTTP/HTTPS or IPFS) of the audio file to analyze."
             }
           }
+        }
+      },
+      {
+        name: "triage_demo_folder",
+        description: "A&R demo inbox triage in ONE call: scans a local folder of demo submissions (.mp3, .wav, .flac, .m4a, .aiff...), analyzes every track, reads the artist/title from audio tags or 'Artist - Title' file names, fetches Spotify traction per artist, applies A&R scoring v2 and returns a COMPACT ranked report (score, priority, bucket, BPM/key/genre, AI-origin flag, monthly listeners, key reason codes, guarded lyrics excerpt). Buckets: 'priority' (listen first), 'listen', 'pass', 'ai_flagged' (confirmed or suspected AI-generated), 'error' (unreadable or rejected file), 'not_analyzed' (the triage stopped early because studio credits ran out or the API key was rejected: see 'halted'). Prefer this tool over analyze_audio_batch whenever the user wants to sort, rank or screen a folder of demos. Cost: 1 studio credit (0.15 USDC) per track, 2 credits (0.25 USDC) with extractLyrics; use dryRun to list files and the estimated cost without charging.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            folderPath: {
+              type: "string",
+              description: "Absolute path (or ~/...) of the local folder containing the demo audio files."
+            },
+            profile: {
+              type: "string",
+              enum: ["discovery", "signing", "beatmaker", "auto"],
+              description: "Scoring profile used for the ranking: 'discovery' (A&R scout, default: an unknown artist is never penalized), 'signing' (label head, weighs streaming traction), 'beatmaker' (instrumentals), 'auto' (beatmaker for instrumentals, discovery otherwise)."
+            },
+            extractLyrics: {
+              type: "boolean",
+              description: "Also transcribe lyrics (2 credits / 0.25 USDC per track). Default false."
+            },
+            recursive: {
+              type: "boolean",
+              description: "Also scan sub-folders. Default false."
+            },
+            maxTracks: {
+              type: "number",
+              description: `Maximum number of files analyzed (default ${TRIAGE_DEFAULT_MAX_TRACKS}, hard limit ${TRIAGE_HARD_MAX_TRACKS}).`
+            },
+            lookupArtists: {
+              type: "boolean",
+              description: "Fetch Spotify traction for each artist (free). Default true."
+            },
+            dryRun: {
+              type: "boolean",
+              description: "List the files, detected artists/titles and the estimated cost without analyzing or charging anything."
+            },
+            concurrency: {
+              type: "number",
+              description: "Parallel analyses (1 to 5, default 3)."
+            }
+          },
+          required: ["folderPath"]
         }
       },
       {
@@ -191,6 +235,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Stage name of the artist to look up."
             },
+            spotify_id: {
+              type: "string",
+              description: "Optional Spotify artist ID or open.spotify.com artist URL to target an exact artist when the name is ambiguous."
+            },
             social_links: {
               type: "array",
               items: { type: "string" },
@@ -205,12 +253,96 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const toolName = request.params.name;
+
+  if (toolName === "triage_demo_folder") {
+    const args = (request.params.arguments || {}) as {
+      folderPath?: string;
+      profile?: string;
+      extractLyrics?: boolean;
+      recursive?: boolean;
+      maxTracks?: number;
+      lookupArtists?: boolean;
+      dryRun?: boolean;
+      concurrency?: number;
+    };
+
+    const folderPath = typeof args.folderPath === 'string' ? args.folderPath.trim() : '';
+    if (!folderPath) {
+      throw new Error("Missing required parameter 'folderPath': the local folder containing the demo files.");
+    }
+    const profile: TriageProfile = ['discovery', 'signing', 'beatmaker', 'auto'].includes(args.profile || '')
+      ? (args.profile as TriageProfile)
+      : 'discovery';
+
+    const auth = resolveAuthMode();
+    if (auth.type === 'NONE' && !args.dryRun) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: "Error: No authentication configured for Tag-per-Track. Please define either TAG_PER_TRACK_API_KEY (from https://tag-per-track.cloud) or WALLET_PRIVATE_KEY in your MCP configuration."
+          }
+        ]
+      };
+    }
+
+    // Progress notifications keep long triages alive on clients that reset their timeout on progress
+    const progressToken = request.params._meta?.progressToken;
+    const onProgress = progressToken === undefined
+      ? undefined
+      : (done: number, total: number, message: string) => {
+          extra.sendNotification({
+            method: "notifications/progress",
+            params: { progressToken, progress: done, total, message },
+          }).catch(() => {});
+        };
+
+    try {
+      const report = await triageDemoFolder(
+        {
+          folderPath,
+          profile,
+          extractLyrics: Boolean(args.extractLyrics),
+          recursive: Boolean(args.recursive),
+          maxTracks: args.maxTracks,
+          lookupArtists: args.lookupArtists,
+          dryRun: Boolean(args.dryRun),
+          concurrency: args.concurrency,
+        },
+        // A dry run never calls the paid routes: any auth placeholder is fine
+        auth.type === 'NONE' ? { type: 'API_KEY', apiKey: '' } : auth,
+        API_URL,
+        API_BASE_URL,
+        onProgress
+      );
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(report, null, 2)
+          }
+        ]
+      };
+    } catch (error: any) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Error triaging demo folder: ${error?.message || String(error)}`
+          }
+        ]
+      };
+    }
+  }
 
   if (toolName === "lookup_artist_stats") {
     const args = (request.params.arguments || {}) as {
       artist_name?: string;
+      spotify_id?: string;
       social_links?: string[];
     };
 
@@ -220,7 +352,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     try {
-      const targetUrl = `${API_BASE_URL}/artist-stats?name=${encodeURIComponent(artistName)}`;
+      const spotifyId = typeof args.spotify_id === 'string' ? args.spotify_id.trim() : '';
+      const targetUrl = `${API_BASE_URL}/artist-stats?name=${encodeURIComponent(artistName)}` +
+        (spotifyId ? `&spotifyId=${encodeURIComponent(spotifyId)}` : '');
       const response = await fetch(targetUrl, {
         method: "GET",
         headers: {
@@ -472,6 +606,32 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
         ]
       },
       {
+        name: "triage_demos",
+        description: "Sorts a local folder of demo submissions like an A&R assistant: one triage_demo_folder call, then a ranked shortlist, AI-generated tracks flagged, and a proposal to file the demos into priority / to-listen / pass / AI sub-folders.",
+        arguments: [
+          {
+            name: "folder_path",
+            description: "Local folder containing the demo audio files (e.g. ~/Music/Demos - week 39)",
+            required: true
+          },
+          {
+            name: "label_focus",
+            description: "Label identity or what you are looking for (e.g. 'afro / urban, club-ready singles'), used to comment the ranking",
+            required: false
+          },
+          {
+            name: "profile",
+            description: "'discovery' (A&R scout, default), 'signing' (label head, weighs streaming traction), 'beatmaker' or 'auto'",
+            required: false
+          },
+          {
+            name: "extract_lyrics",
+            description: "Set to 'true' to also transcribe lyrics (2 credits / 0.25 USDC per track)",
+            required: false
+          }
+        ]
+      },
+      {
         name: "batch_demo_screening",
         description: "Screens an EP, album, or folder of demo submissions in parallel using analyze_audio_batch. Evaluates energy flow, harmonic key progression, and selects standout lead singles.",
         arguments: [
@@ -527,6 +687,43 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
               `${tractionSection}` +
               `   - 💎 Hybrid A&R Score & Tier: Classify the profile (Emerging Gem: <50k listeners with strong acoustic score, Rising Talent, or Established Artist) with a 0-100 viability score.\n` +
               `   - 📋 Strategic Action Plan: Target DSP Editorial Playlists (Spotify / Apple Music), radio/club format viability, sync licensing potential, and final A&R recommendation (Sign, Creative Development, or Pass).`
+          }
+        }
+      ]
+    };
+  }
+
+  if (name === "triage_demos") {
+    const folder = args?.folder_path || "<path/to/demo/folder>";
+    const focus = args?.label_focus?.trim() || "";
+    const profile = ['discovery', 'signing', 'beatmaker', 'auto'].includes(args?.profile || '') ? args!.profile! : 'discovery';
+    const extractLyrics = args?.extract_lyrics === "true" || args?.extract_lyrics === "1";
+
+    return {
+      description: `Demo inbox triage for "${folder}"`,
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `You are the A&R assistant of a record label${focus ? ` looking for: ${focus}` : ''}.\n` +
+              `Sort the demo submissions in the folder "${folder}". Answer in the language of the user.\n\n` +
+              `Protocol:\n` +
+              `1. Call \`triage_demo_folder\` ONCE with folderPath: "${folder}", profile: "${profile}", extractLyrics: ${extractLyrics}. ` +
+              `Do not call analyze_audio track by track and do not display the raw JSON.\n` +
+              `2. Open with one line: number of demos, how many to listen to first, how many AI-flagged, time taken.\n` +
+              `3. Ranked table (all analyzed tracks, rank order): #, Artist – Title, Score /100, BPM · Key, Genre, Origin (from ai.flag, see rules), Spotify monthly listeners (or "unknown"), Why (one short plain-language phrase built from the reason codes).\n` +
+              `4. "Listen first": the top 1 to 3 'priority' tracks, 2 sentences each${focus ? ', including their fit with the label focus' : ''}. Mention 'isGem' tracks as under-the-radar gems.\n` +
+              `5. "AI-flagged": list the 'ai_flagged' tracks with verdict, confidence and generator. A 'suspected' flag is a suspicion to verify by ear, never a certainty.\n` +
+              `6. Failed files (bucket 'error') with the reason, if any. If the report has 'halted' (studio credits exhausted or API key rejected), say it first and plainly: how many demos were analyzed, how many are still waiting, and that the user must recharge at https://tag-per-track.cloud; do not present the waiting demos as broken files.\n` +
+              `7. Filing proposal: priority -> "1_Priorite", listen -> "2_A_ecouter", pass -> "3_Refus", ai_flagged -> "4_IA_suspecte", error -> "5_Erreurs" (sub-folders of "${folder}"). ` +
+              `If you have file-system access, ask for confirmation, then create the sub-folders and move the files; never delete a file.\n\n` +
+              `Rules:\n` +
+              `- Origin column: derive it from ai.flag, never from the raw ai.verdict: "clear" -> Human, "uncertain" -> Inconclusive (confidence %, omitted when 0), "suspected" -> AI suspected (confidence %), "blocked" -> AI confirmed (confidence %, generator), "unchecked" -> Not checked. An AI_GENERATED verdict under 60 % is inconclusive: never write "AI" for it.\n` +
+              `- Reason and recommendation fields are codes (e.g. "+listening.high_engagement", "production.clipping", "listen_first_gem"): translate them into plain language, never show them raw.\n` +
+              `- Only quote lyrics whose lyrics.status is "ok". "instrumental", "no_vocals_detected" and "suspect_repetition" mean there is no reliable transcription: say so without quoting.\n` +
+              `- Unknown Spotify traction is not a weakness: the artist may simply be new.\n` +
+              `- The score ranks demos to listen to; it never replaces listening.`
           }
         }
       ]

@@ -13,6 +13,7 @@ Enable an AI to "pay to listen" autonomously. When an AI agent wants to analyze 
 - **`analyze_audio` Tool (Canonical)**: Extracts BPM, Genre, Mood, Key, Instruments, production metrics, optional Lyrics (1 credit or 0.15 USDC standard / 2 credits or 0.25 USDC with lyrics), **AI-Generated Music Detection** (`ai_detection`: Suno, Udio, neural vocoders with `HUMAN`, `AI_GENERATED`, or `UNCERTAIN` verdicts) and the server-side **A&R evaluation** (`arEvaluation`: discovery / signing / beatmaker profiles).
 - **`analyze_audio_with_lyrics` Tool (Alias)**: Extracts complete musical metadata, transcribes full vocal lyrics, and returns AI origin integrity metrics (2 credits or 0.25 USDC).
 - **`analyze_audio_batch` Tool (Parallel Processing)**: Analyzes multiple music tracks concurrently with AI origin detection on every track, dramatically reducing turnaround time for albums and playlists.
+- **`triage_demo_folder` Tool (Demo Inbox Triage)**: Sorts a whole local folder of demos in one call: analysis, artist/title from `Artist - Title` file names or audio tags, Spotify traction, A&R scoring v2 re-computed with the traction, and a compact ranked report with buckets (`priority`, `listen`, `pass`, `ai_flagged`, `error`). Unreliable lyrics (instrumental, no voice, looping hallucination) are flagged instead of quoted.
 - **`lookup_artist_stats` Tool (A&R Traction)**: Fetches public Spotify streaming traction (monthly listeners, followers, popularity score, genres) for hybrid A&R qualification.
 - **Selective Audio Compression**: Automatically compresses heavy uncompressed files (`.wav`, `.aiff`, `.aif`) or audio files larger than 15 MB to 128 kbps AAC (`.m4a`) before upload (using native macOS `afconvert` or `ffmpeg`), reducing upload bandwidth and latency by up to 90% while leaving lightweight files (`.mp3`, `.m4a` $\le 15$ MB) untouched.
 - **Dual Authentication**: Studio API key (`Authorization: Bearer tpt_live_…`, prepaid credits) takes priority over the Web3 wallet.
@@ -20,7 +21,7 @@ Enable an AI to "pay to listen" autonomously. When an AI agent wants to analyze 
 - **Integrated Web3**: On-chain signing via `viem` (EIP-3009 TransferWithAuthorization on Base).
 - **Client-Side Financial Guard (Spending Cap)**: Built-in spending limit (default 0.50 USDC max per call) protecting your wallet against abnormal requests.
 - **Confidential by Default for x402**: Wallet-paid analyses are sent with `x-no-persist` (not stored server-side); Studio API key analyses are saved to your dashboard history unless `TAG_PER_TRACK_NO_PERSIST=1`.
-- **Prompts**: `qualify_demo_ar` (single demo A&R qualification) and `batch_demo_screening` (multi-track screening).
+- **Prompts**: `triage_demos` (sort a demo folder into a ranked shortlist and sub-folders), `qualify_demo_ar` (single demo A&R qualification) and `batch_demo_screening` (multi-track screening).
 - **Strict File Format Validation**: Rejects non-audio files to protect local privacy and prevent arbitrary file exfiltration.
 - **Deferred Binary Loading & Timeouts**: 15s handshake / 120s processing timeouts with memory-efficient streaming and automatic temp file cleanup.
 - **Compatibility**: Designed for use with Claude Desktop, Cursor, Windsurf, or any MCP client.
@@ -148,11 +149,55 @@ Analyzes multiple audio tracks in parallel (batch processing). Vastly reduces to
   - `failed`: Count of failed tracks.
   - `results`: Detailed array containing status (`success` or `error`), metadata (including `ai_detection`), or error reason for each track.
 
-### 4. `lookup_artist_stats`
+### 4. `triage_demo_folder`
+Sorts a local folder of demo submissions in one call, built for the A&R "demo inbox" workflow. Only compact results are returned, so a 20-track folder fits comfortably in the model context.
+
+Pipeline: list the audio files → artist/title from an `Artist - Title` file name (preferred: tags on demos are often DAW or account defaults), else from the audio tags → paid analyses (bounded concurrency) → one free Spotify lookup per distinct main artist (`"Miimii ft Dj Skycee"` → `"Miimii"`) → free server-side re-scoring (`POST /api/ar-score`) with the traction attached → ranking. MCP progress notifications are sent after each track when the client provides a `progressToken`.
+
+- **Arguments**:
+  - `folderPath` (*string*, required): Local folder (absolute or `~/...`).
+  - `profile` (*string*, optional): `discovery` (default, an unknown artist is never penalized), `signing` (weighs streaming traction), `beatmaker`, or `auto` (beatmaker for instrumentals).
+  - `extractLyrics` (*boolean*, optional): Also transcribe lyrics (2 credits / 0.25 USDC per track).
+  - `recursive` (*boolean*, optional): Scan sub-folders.
+  - `maxTracks` (*number*, optional): Default 25, hard limit 50.
+  - `lookupArtists` (*boolean*, optional): Spotify traction lookup, default `true`.
+  - `dryRun` (*boolean*, optional): List the files, detected artists/titles and the estimated cost without analyzing or charging.
+  - `concurrency` (*number*, optional): 1 to 5, default 3.
+
+- **Cost**: 1 credit (0.15 USDC) per analyzed track, 2 credits (0.25 USDC) with lyrics. Failed analyses are not charged.
+
+- **Output Structure** (one entry per track, best score first, errors last):
+```json
+{
+  "rank": 1,
+  "bucket": "priority",
+  "file": "Stone mc - Ma ville (makette).mp3",
+  "artist": "Stone mc",
+  "title": "Ma ville (makette)",
+  "score": 78,
+  "priority": "top",
+  "recommendation": "listen_first_gem",
+  "isGem": true,
+  "profile": "discovery",
+  "audio": { "bpm": 104, "key": "D minor", "genre": "Latin---Reggaeton", "moods": ["party", "happy"], "audioType": "vocal", "durationSec": 190 },
+  "ai": { "verdict": "HUMAN", "confidence": 90, "flag": "clear" },
+  "traction": { "spotifyArtist": "Stone Mc", "monthlyListeners": 6, "followers": 36, "tier": "emerging" },
+  "reasons": ["+production.loudness_ready(-9)", "+listening.strong_groove(1.6)"],
+  "lyrics": { "status": "ok", "excerpt": "..." }
+}
+```
+  - `bucket`: `priority` (top/high priority), `listen` (medium), `pass` (low), `ai_flagged` (confirmed or suspected AI-generated), `error` (unreadable or rejected file), `not_analyzed` (see below).
+  - **Credits exhausted / invalid key**: as soon as the API answers "Insufficient studio credits" (HTTP 402) or "Invalid API key" (HTTP 401), the remaining files are not sent. The report then carries `halted: { reason, notAnalyzed }`, the affected tracks are in the `not_analyzed` bucket, and only the successful analyses are counted in `estimatedCost`. The same stop rule applies to `analyze_audio_batch` (`skipped` count and `haltReason`).
+  - `ai.flag`: `blocked` (confirmed AI), `suspected` (to verify by ear), `uncertain`, `clear`, `unchecked`.
+  - `lyrics.status`: `ok`, `instrumental`, `no_vocals_detected` or `suspect_repetition` (a short phrase looping, typical of a Whisper hallucination). Only `ok` lyrics should be quoted.
+  - The report header gives `buckets` counts, `estimatedCost`, `scoringVersion`, `elapsedSeconds` and `notes` (tracks over the limit, artists not found...).
+
+### 5. `lookup_artist_stats`
 Retrieves streaming traction and commercial metrics for an artist (Spotify monthly listeners, followers, popularity score, genres) for A&R qualification. Free (no credit or payment). This service is strictly decoupled from the acoustic analysis pipeline; the API caches results (7 days persistent, 24 hours in memory) with graceful fallback.
 
 - **Arguments**:
   - `artist_name` (*string*, required): Stage name of the artist (e.g. `"Daft Punk"`, `"Kaytranada"`).
+  - `spotify_id` (*string*, optional): Spotify artist ID or `open.spotify.com` artist URL, to target an exact artist when the name is ambiguous.
   - `social_links` (*string[]*, optional): Optional social media profile links for future enrichment.
 
 - **Output Structure**:

@@ -85,7 +85,7 @@
   "tools": [
     {
       "name": "analyze_audio",
-      "description": "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments), AI music detection verdict (HUMAN vs AI_GENERATED Suno/Udio neural vocoder risk with confidence index in 'ai_detection'), and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY (1 credit, or 2 credits with extractLyrics) or Web3 x402 micro-payment on Base (0.15 USDC, or 0.25 USDC with extractLyrics).",
+      "description": "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments), AI music detection verdict (HUMAN vs AI_GENERATED Suno/Udio neural vocoder risk with confidence index in 'ai_detection'), explainable A&R scoring v2 in 'arEvaluation' (discovery / signing / beatmaker profiles, AI gate, vocal vs instrumental), and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY (1 credit, or 2 credits with extractLyrics) or Web3 x402 micro-payment on Base (0.15 USDC, or 0.25 USDC with extractLyrics).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -119,6 +119,56 @@
             "description": "The direct publicly accessible URL (HTTP/HTTPS or IPFS) of the audio file to analyze."
           }
         }
+      }
+    },
+    {
+      "name": "triage_demo_folder",
+      "description": "A&R demo inbox triage in ONE call: scans a local folder of demo submissions (.mp3, .wav, .flac, .m4a, .aiff...), analyzes every track, reads the artist/title from audio tags or 'Artist - Title' file names, fetches Spotify traction per artist, applies A&R scoring v2 and returns a COMPACT ranked report (score, priority, bucket, BPM/key/genre, AI-origin flag, monthly listeners, key reason codes, guarded lyrics excerpt). Buckets: 'priority' (listen first), 'listen', 'pass', 'ai_flagged' (confirmed or suspected AI-generated), 'error' (unreadable or rejected file), 'not_analyzed' (the triage stopped early because studio credits ran out or the API key was rejected: see 'halted'). Prefer this tool over analyze_audio_batch whenever the user wants to sort, rank or screen a folder of demos. Cost: 1 studio credit (0.15 USDC) per track, 2 credits (0.25 USDC) with extractLyrics; use dryRun to list files and the estimated cost without charging.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "folderPath": {
+            "type": "string",
+            "description": "Absolute path (or ~/...) of the local folder containing the demo audio files."
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "discovery",
+              "signing",
+              "beatmaker",
+              "auto"
+            ],
+            "description": "Scoring profile used for the ranking: 'discovery' (A&R scout, default: an unknown artist is never penalized), 'signing' (label head, weighs streaming traction), 'beatmaker' (instrumentals), 'auto' (beatmaker for instrumentals, discovery otherwise)."
+          },
+          "extractLyrics": {
+            "type": "boolean",
+            "description": "Also transcribe lyrics (2 credits / 0.25 USDC per track). Default false."
+          },
+          "recursive": {
+            "type": "boolean",
+            "description": "Also scan sub-folders. Default false."
+          },
+          "maxTracks": {
+            "type": "number",
+            "description": "Maximum number of files analyzed (default 25, hard limit 50)."
+          },
+          "lookupArtists": {
+            "type": "boolean",
+            "description": "Fetch Spotify traction for each artist (free). Default true."
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "List the files, detected artists/titles and the estimated cost without analyzing or charging anything."
+          },
+          "concurrency": {
+            "type": "number",
+            "description": "Parallel analyses (1 to 5, default 3)."
+          }
+        },
+        "required": [
+          "folderPath"
+        ]
       }
     },
     {
@@ -183,6 +233,10 @@
             "type": "string",
             "description": "Stage name of the artist to look up."
           },
+          "spotify_id": {
+            "type": "string",
+            "description": "Optional Spotify artist ID or open.spotify.com artist URL to target an exact artist when the name is ambiguous."
+          },
           "social_links": {
             "type": "array",
             "items": {
@@ -220,6 +274,32 @@
         {
           "name": "curation_focus",
           "description": "Curatorial objective: 'label_signing_decision', 'dsp_playlist_pitching', 'sync_licensing', or 'dj_radio_programming'",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "triage_demos",
+      "description": "Sorts a local folder of demo submissions like an A&R assistant: one triage_demo_folder call, then a ranked shortlist, AI-generated tracks flagged, and a proposal to file the demos into priority / to-listen / pass / AI sub-folders.",
+      "arguments": [
+        {
+          "name": "folder_path",
+          "description": "Local folder containing the demo audio files (e.g. ~/Music/Demos - week 39)",
+          "required": true
+        },
+        {
+          "name": "label_focus",
+          "description": "Label identity or what you are looking for (e.g. 'afro / urban, club-ready singles'), used to comment the ranking",
+          "required": false
+        },
+        {
+          "name": "profile",
+          "description": "'discovery' (A&R scout, default), 'signing' (label head, weighs streaming traction), 'beatmaker' or 'auto'",
+          "required": false
+        },
+        {
+          "name": "extract_lyrics",
+          "description": "Set to 'true' to also transcribe lyrics (2 credits / 0.25 USDC per track)",
           "required": false
         }
       ]
