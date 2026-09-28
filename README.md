@@ -16,6 +16,7 @@ Enable an AI to "pay to listen" autonomously. When an AI agent wants to analyze 
 - **`triage_demo_folder` Tool (Demo Inbox Triage)**: Sorts a whole local folder of demos in one call: analysis, artist/title from `Artist - Title` file names or audio tags, Spotify traction, A&R scoring v2 re-computed with the traction, and a compact ranked report with buckets (`priority`, `listen`, `pass`, `ai_flagged`, `error`). Unreliable lyrics (instrumental, no voice, looping hallucination) are flagged instead of quoted.
 - **`lookup_artist_stats` Tool (A&R Traction)**: Fetches public Spotify streaming traction (monthly listeners, followers, popularity score, genres) for hybrid A&R qualification.
 - **Selective Audio Compression**: Automatically compresses heavy uncompressed files (`.wav`, `.aiff`, `.aif`) or audio files larger than 15 MB to 128 kbps AAC (`.m4a`) before upload (using native macOS `afconvert` or `ffmpeg`), reducing upload bandwidth and latency by up to 90% while leaving lightweight files (`.mp3`, `.m4a` $\le 15$ MB) untouched.
+- **Prices in the Right Unit**: tool descriptions, prompts and reports state costs in studio credits when a Studio API key is configured, and in USDC only in wallet (x402) mode, so an A&R paying with credits never sees crypto amounts.
 - **Dual Authentication**: Studio API key (`Authorization: Bearer tpt_live_…`, prepaid credits) takes priority over the Web3 wallet.
 - **Automated x402 Payment**: Manages the x402 challenge-response cycle (HTTP 402), with the platform wallet and USDC contracts pinned client-side.
 - **Integrated Web3**: On-chain signing via `viem` (EIP-3009 TransferWithAuthorization on Base).
@@ -164,7 +165,7 @@ Pipeline: list the audio files → artist/title from an `Artist - Title` file na
   - `dryRun` (*boolean*, optional): List the files, detected artists/titles and the estimated cost without analyzing or charging.
   - `concurrency` (*number*, optional): 1 to 5, default 3.
 
-- **Cost**: 1 credit (0.15 USDC) per analyzed track, 2 credits (0.25 USDC) with lyrics. Failed analyses are not charged.
+- **Cost**: 1 credit (0.15 USDC) per analyzed track, 2 credits (0.25 USDC) with lyrics. Failed analyses are not charged. The report states it in the configured unit only (see `estimatedCost` below).
 
 - **Output Structure** (one entry per track, best score first, errors last):
 ```json
@@ -191,6 +192,7 @@ Pipeline: list the audio files → artist/title from an `Artist - Title` file na
   - `ai.flag`: `blocked` (confirmed AI), `suspected` (to verify by ear), `uncertain`, `clear`, `unchecked`.
   - `lyrics.status`: `ok`, `approximate` (low-confidence transcription reported by the API, typically a language Whisper does not support such as Creole, transcribed phonetically), `instrumental`, `no_vocals_detected` or `suspect_repetition` (a short phrase looping, typical of a Whisper hallucination). `lyrics.language` is the language detected by Whisper. Only `ok` lyrics should be quoted.
   - The report header gives `buckets` counts, `estimatedCost`, `scoringVersion`, `elapsedSeconds` and `notes` (tracks over the limit, artists not found...).
+  - `estimatedCost` is expressed in the unit the account pays with: `{ "label": "8 studio credits", "studioCredits": 8 }` with a Studio API key, `{ "label": "1.2 USDC", "usdc": 1.2 }` with a wallet. Both are given only when no authentication is configured.
 
 ### 5. `lookup_artist_stats`
 Retrieves streaming traction and commercial metrics for an artist (Spotify monthly listeners, followers, popularity score, genres) for A&R qualification. Free (no credit or payment). This service is strictly decoupled from the acoustic analysis pipeline; the API caches results (7 days persistent, 24 hours in memory) with graceful fallback.

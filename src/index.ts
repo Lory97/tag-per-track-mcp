@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import * as dotenv from 'dotenv';
 import { analyzeAudio, analyzeAudioBatch, type BatchTrackItem, type AuthConfig } from './x402.js';
 import { triageDemoFolder, TRIAGE_DEFAULT_MAX_TRACKS, TRIAGE_HARD_MAX_TRACKS, type TriageProfile } from './triage.js';
+import { paymentModeFor, pricingNote, trackPrice } from './pricing.js';
 
 dotenv.config({ quiet: true });
 
@@ -94,11 +95,13 @@ const server = new Server(
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
+  // Prices are described in the unit the configured account pays with (credits or USDC)
+  const mode = paymentModeFor(resolveAuthMode().type);
   return {
     tools: [
       {
         name: "analyze_audio",
-        description: "Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments), AI music detection verdict (HUMAN vs AI_GENERATED Suno/Udio neural vocoder risk with confidence index in 'ai_detection'), explainable A&R scoring v2 in 'arEvaluation' (discovery / signing / beatmaker profiles, AI gate, vocal vs instrumental), and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY (1 credit, or 2 credits with extractLyrics) or Web3 x402 micro-payment on Base (0.15 USDC, or 0.25 USDC with extractLyrics).",
+        description: `Analyzes a music track or audio file to extract musical metadata (BPM, genre, mood, key, instruments), AI music detection verdict (HUMAN vs AI_GENERATED Suno/Udio neural vocoder risk with confidence index in 'ai_detection'), explainable A&R scoring v2 in 'arEvaluation' (discovery / signing / beatmaker profiles, AI gate, vocal vs instrumental), and optionally vocal lyrics. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. ${pricingNote(mode)}`,
         inputSchema: {
           type: "object",
           properties: {
@@ -112,14 +115,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             extractLyrics: {
               type: "boolean",
-              description: "Optional: Set to true to transcribe and extract vocal lyrics in addition to metadata. Costs 2 studio credits or 0.25 USDC instead of 1 credit / 0.15 USDC."
+              description: `Optional: Set to true to transcribe and extract vocal lyrics in addition to metadata. Costs ${trackPrice(mode, true)} instead of ${trackPrice(mode, false)}.`
             }
           }
         }
       },
       {
         name: "analyze_audio_with_lyrics",
-        description: "Analyzes an audio track to extract complete musical metadata, AI-generated music detection verdict (HUMAN vs AI_GENERATED Suno/Udio), AND transcribe full vocal lyrics using AI. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Note: Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY (2 credits) or Web3 x402 micro-payment of 0.25 USDC on Base. (Alias for analyze_audio with extractLyrics: true).",
+        description: `Analyzes an audio track to extract complete musical metadata, AI-generated music detection verdict (HUMAN vs AI_GENERATED Suno/Udio), AND transcribe full vocal lyrics using AI. Supports local audio files via 'filePath' (read in binary and uploaded) or remote URLs via 'fileUrl'. Costs ${trackPrice(mode, true)} per track. (Alias for analyze_audio with extractLyrics: true).`,
         inputSchema: {
           type: "object",
           properties: {
@@ -136,7 +139,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "triage_demo_folder",
-        description: "A&R demo inbox triage in ONE call: scans a local folder of demo submissions (.mp3, .wav, .flac, .m4a, .aiff...), analyzes every track, reads the artist/title from audio tags or 'Artist - Title' file names, fetches Spotify traction per artist, applies A&R scoring v2 and returns a COMPACT ranked report (score, priority, bucket, BPM/key/genre, AI-origin flag, monthly listeners, key reason codes, guarded lyrics excerpt). Buckets: 'priority' (listen first), 'listen', 'pass', 'ai_flagged' (confirmed or suspected AI-generated), 'error' (unreadable or rejected file), 'not_analyzed' (the triage stopped early because studio credits ran out or the API key was rejected: see 'halted'). Prefer this tool over analyze_audio_batch whenever the user wants to sort, rank or screen a folder of demos. Cost: 1 studio credit (0.15 USDC) per track, 2 credits (0.25 USDC) with extractLyrics; use dryRun to list files and the estimated cost without charging.",
+        description: `A&R demo inbox triage in ONE call: scans a local folder of demo submissions (.mp3, .wav, .flac, .m4a, .aiff...), analyzes every track, reads the artist/title from audio tags or 'Artist - Title' file names, fetches Spotify traction per artist, applies A&R scoring v2 and returns a COMPACT ranked report (score, priority, bucket, BPM/key/genre, AI-origin flag, monthly listeners, key reason codes, guarded lyrics excerpt). Buckets: 'priority' (listen first), 'listen', 'pass', 'ai_flagged' (confirmed or suspected AI-generated), 'error' (unreadable or rejected file), 'not_analyzed' (the triage stopped early because studio credits ran out or the API key was rejected: see 'halted'). Prefer this tool over analyze_audio_batch whenever the user wants to sort, rank or screen a folder of demos. ${pricingNote(mode)} Use dryRun to list files and the estimated cost (estimatedCost.label) without charging.`,
         inputSchema: {
           type: "object",
           properties: {
@@ -151,7 +154,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             extractLyrics: {
               type: "boolean",
-              description: "Also transcribe lyrics (2 credits / 0.25 USDC per track). Default false."
+              description: `Also transcribe lyrics (${trackPrice(mode, true)} per track instead of ${trackPrice(mode, false)}). Default false.`
             },
             recursive: {
               type: "boolean",
@@ -179,7 +182,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "analyze_audio_batch",
-        description: "Analyzes multiple music tracks or audio files in parallel (batch processing). Vastly reduces total execution time compared to sequential processing. Accepts a list of local file paths ('filePaths') or remote URLs ('fileUrls'), or a structured array of 'tracks'. Supports dual-authentication: prepaid studio credits via TAG_PER_TRACK_API_KEY or Web3 x402 micro-payments on Base.",
+        description: `Analyzes multiple music tracks or audio files in parallel (batch processing). Vastly reduces total execution time compared to sequential processing. Accepts a list of local file paths ('filePaths') or remote URLs ('fileUrls'), or a structured array of 'tracks'. ${pricingNote(mode)}`,
         inputSchema: {
           type: "object",
           properties: {
@@ -199,7 +202,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                   },
                   extractLyrics: {
                     type: "boolean",
-                    description: "Whether to extract vocal lyrics for this specific track (costs 0.25 USDC instead of 0.15 USDC)."
+                    description: `Whether to extract vocal lyrics for this specific track (${trackPrice(mode, true)} instead of ${trackPrice(mode, false)}).`
                   }
                 }
               }
@@ -216,7 +219,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             extractLyrics: {
               type: "boolean",
-              description: "Optional global flag: set to true to transcribe and extract vocal lyrics for all tracks in this batch (0.25 USDC per track). Default is false (0.15 USDC per track)."
+              description: `Optional global flag: set to true to transcribe and extract vocal lyrics for all tracks in this batch (${trackPrice(mode, true)} per track). Default is false (${trackPrice(mode, false)} per track).`
             },
             concurrency: {
               type: "number",
@@ -305,6 +308,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         {
           folderPath,
           profile,
+          paymentMode: paymentModeFor(auth.type),
           extractLyrics: Boolean(args.extractLyrics),
           recursive: Boolean(args.recursive),
           maxTracks: args.maxTracks,
@@ -577,6 +581,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
 // 3. Register Prompts (Tailored to Tag-per-Track's Hybrid A&R & Acoustic Intelligence)
 server.setRequestHandler(ListPromptsRequestSchema, async () => {
+  const mode = paymentModeFor(resolveAuthMode().type);
   return {
     prompts: [
       {
@@ -595,7 +600,7 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
           },
           {
             name: "extract_lyrics",
-            description: "Set to 'true' to transcribe full vocal lyrics using AI Whisper and evaluate lyrical themes (costs 0.25 USDC instead of 0.15 USDC)",
+            description: `Set to 'true' to transcribe full vocal lyrics using AI Whisper and evaluate lyrical themes (${trackPrice(mode, true)} instead of ${trackPrice(mode, false)})`,
             required: false
           },
           {
@@ -626,7 +631,7 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
           },
           {
             name: "extract_lyrics",
-            description: "Set to 'true' to also transcribe lyrics (2 credits / 0.25 USDC per track)",
+            description: `Set to 'true' to also transcribe lyrics (${trackPrice(mode, true)} per track instead of ${trackPrice(mode, false)})`,
             required: false
           }
         ]
@@ -719,6 +724,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
               `7. Filing proposal: priority -> "1_Priorite", listen -> "2_A_ecouter", pass -> "3_Refus", ai_flagged -> "4_IA_suspecte", error -> "5_Erreurs" (sub-folders of "${folder}"). ` +
               `If you have file-system access, ask for confirmation, then create the sub-folders and move the files; never delete a file.\n\n` +
               `Rules:\n` +
+              `- Costs: quote estimatedCost.label as is (studio credits when the account pays with a Studio API key). Never convert it or mention another currency.\n` +
               `- Origin column: derive it from ai.flag, never from the raw ai.verdict: "clear" -> Human, "uncertain" -> Inconclusive (confidence %, omitted when 0), "suspected" -> AI suspected (confidence %), "blocked" -> AI confirmed (confidence %, generator), "unchecked" -> Not checked. An AI_GENERATED verdict under 60 % is inconclusive: never write "AI" for it.\n` +
               `- Reason and recommendation fields are codes (e.g. "+listening.high_engagement", "production.clipping", "listen_first_gem"): translate them into plain language, never show them raw.\n` +
               `- Only quote lyrics whose lyrics.status is "ok". "approximate" means the singing was transcribed with low confidence (typically a language Whisper does not support, such as Creole): write "approximate transcription" and never quote it. "instrumental", "no_vocals_detected" and "suspect_repetition" mean there is no reliable transcription: say so without quoting.\n` +

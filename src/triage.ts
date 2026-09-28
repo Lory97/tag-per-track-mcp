@@ -12,6 +12,7 @@ import {
     type AuthConfig,
     type BatchTrackItem,
 } from './x402.js';
+import { estimateCost, type CostEstimate, type PaymentMode } from './pricing.js';
 
 /**
  * Demo inbox triage: scans a local folder of demo submissions, analyzes every track, enriches it with
@@ -30,6 +31,8 @@ export type LyricsStatus = 'ok' | 'approximate' | 'instrumental' | 'no_vocals_de
 
 export interface TriageOptions {
     folderPath: string;
+    /** Unit used for estimatedCost (defaults to studio credits) */
+    paymentMode?: PaymentMode;
     profile?: TriageProfile;
     extractLyrics?: boolean;
     recursive?: boolean;
@@ -102,7 +105,8 @@ export interface TriageReport {
     /** Set when the triage stopped early: studio credits exhausted or API key rejected */
     halted?: { reason: string; notAnalyzed: number };
     buckets: Record<TriageBucket, number>;
-    estimatedCost: { studioCredits: number; usdc: number };
+    /** Cost in the configured payment unit only (credits for a Studio API key, USDC for a wallet) */
+    estimatedCost: CostEstimate;
     scoringVersion?: string;
     elapsedSeconds: number;
     notes: string[];
@@ -346,10 +350,7 @@ export async function triageDemoFolder(
 
     const identities = await Promise.all(files.map(readTrackIdentity));
     // Credits and payments are only taken on a successful analysis
-    const costFor = (tracks: number) => ({
-        studioCredits: tracks * (extractLyrics ? 2 : 1),
-        usdc: Math.round(tracks * (extractLyrics ? 0.25 : 0.15) * 100) / 100,
-    });
+    const costFor = (tracks: number) => estimateCost(options.paymentMode || 'studio_credits', tracks, extractLyrics);
     const emptyBuckets = (): Record<TriageBucket, number> => ({ priority: 0, listen: 0, pass: 0, ai_flagged: 0, error: 0, not_analyzed: 0 });
 
     if (options.dryRun) {
