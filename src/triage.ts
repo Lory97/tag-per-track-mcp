@@ -216,9 +216,10 @@ export function assessLyrics(
     const language = info?.language || undefined;
 
     const text = String(lyrics).replace(/\s+/g, ' ').trim();
-    if (!text || info?.reliability === 'none') return { status: 'no_vocals_detected' };
-
     const words = text.toLowerCase().match(/[\p{L}\p{N}']+/gu) || [];
+    // No word at all ("♪♪♪": singing Whisper heard but could not transcribe) is not lyrics
+    if (words.length === 0 || info?.reliability === 'none') return { status: 'no_vocals_detected' };
+
     const unique = new Set(words);
     if (words.length >= 6 && unique.size <= 6 && words.length >= unique.size * 2) {
         return { status: 'suspect_repetition', language, excerpt: truncate(text, 60) };
