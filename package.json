@@ -5,7 +5,7 @@
   "main": "build/index.js",
   "type": "module",
   "bin": {
-    "tag-per-track-mcp": "./build/index.js"
+    "tag-per-track-mcp": "build/index.js"
   },
   "files": [
     "build"
@@ -32,7 +32,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Lory97/tag-per-track-mcp.git"
+    "url": "git+https://github.com/Lory97/tag-per-track-mcp.git"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
