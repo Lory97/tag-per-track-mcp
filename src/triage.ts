@@ -26,7 +26,7 @@ export const TRIAGE_DEFAULT_CONCURRENCY = 3;
 export type TriageProfile = ArProfile | 'auto';
 /** not_analyzed: never analyzed because the account stopped the triage (credits exhausted, invalid key) */
 export type TriageBucket = 'priority' | 'listen' | 'pass' | 'ai_flagged' | 'error' | 'not_analyzed';
-export type LyricsStatus = 'ok' | 'instrumental' | 'no_vocals_detected' | 'suspect_repetition';
+export type LyricsStatus = 'ok' | 'approximate' | 'instrumental' | 'no_vocals_detected' | 'suspect_repetition';
 
 export interface TriageOptions {
     folderPath: string;
@@ -49,6 +49,8 @@ export interface TrackIdentity {
 
 export interface LyricsAssessment {
     status: LyricsStatus;
+    /** Language detected by Whisper, when the API returns it */
+    language?: string;
     excerpt?: string;
 }
 
@@ -200,22 +202,31 @@ export function primaryArtist(artist: string): string {
 const LYRICS_EXCERPT_MAX_CHARS = 180;
 
 /**
- * Whisper invents text over music without a voice (a short phrase looping, often in another language).
- * The backend already drops the segments Whisper itself flags as no-speech; this is the client-side net.
+ * Whisper invents text over music without a voice (a short phrase looping, often in another language)
+ * and transcribes unsupported languages (Creole) phonetically in another one. The backend drops the
+ * hallucinated segments and rates the transcription (lyricsInfo.reliability); this is the client-side net.
  */
-export function assessLyrics(lyrics: string | undefined, evaluation?: ArEvaluation): LyricsAssessment | undefined {
+export function assessLyrics(
+    lyrics: string | undefined,
+    evaluation?: ArEvaluation,
+    info?: AudioAnalysisResult['lyricsInfo'],
+): LyricsAssessment | undefined {
     if (lyrics === undefined || lyrics === null) return undefined;
     if (evaluation?.audioType === 'instrumental') return { status: 'instrumental' };
+    const language = info?.language || undefined;
 
     const text = String(lyrics).replace(/\s+/g, ' ').trim();
-    if (!text) return { status: 'no_vocals_detected' };
+    if (!text || info?.reliability === 'none') return { status: 'no_vocals_detected' };
 
     const words = text.toLowerCase().match(/[\p{L}\p{N}']+/gu) || [];
     const unique = new Set(words);
     if (words.length >= 6 && unique.size <= 6 && words.length >= unique.size * 2) {
-        return { status: 'suspect_repetition', excerpt: truncate(text, 60) };
+        return { status: 'suspect_repetition', language, excerpt: truncate(text, 60) };
     }
-    return { status: 'ok', excerpt: truncate(text, LYRICS_EXCERPT_MAX_CHARS) };
+    if (info?.reliability === 'approximate') {
+        return { status: 'approximate', language, excerpt: truncate(text, LYRICS_EXCERPT_MAX_CHARS) };
+    }
+    return { status: 'ok', language, excerpt: truncate(text, LYRICS_EXCERPT_MAX_CHARS) };
 }
 
 function truncate(text: string, max: number): string {
@@ -458,7 +469,7 @@ export async function triageDemoFolder(
                   }
                 : null,
             reasons: evaluation ? keyReasons(evaluation) : [],
-            lyrics: assessLyrics(data.lyrics, evaluation),
+            lyrics: assessLyrics(data.lyrics, evaluation, data.lyricsInfo),
         };
     });
 

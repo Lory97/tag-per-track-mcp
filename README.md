@@ -189,7 +189,7 @@ Pipeline: list the audio files → artist/title from an `Artist - Title` file na
   - `bucket`: `priority` (top/high priority), `listen` (medium), `pass` (low), `ai_flagged` (confirmed or suspected AI-generated), `error` (unreadable or rejected file), `not_analyzed` (see below).
   - **Credits exhausted / invalid key**: as soon as the API answers "Insufficient studio credits" (HTTP 402) or "Invalid API key" (HTTP 401), the remaining files are not sent. The report then carries `halted: { reason, notAnalyzed }`, the affected tracks are in the `not_analyzed` bucket, and only the successful analyses are counted in `estimatedCost`. The same stop rule applies to `analyze_audio_batch` (`skipped` count and `haltReason`).
   - `ai.flag`: `blocked` (confirmed AI), `suspected` (to verify by ear), `uncertain`, `clear`, `unchecked`.
-  - `lyrics.status`: `ok`, `instrumental`, `no_vocals_detected` or `suspect_repetition` (a short phrase looping, typical of a Whisper hallucination). Only `ok` lyrics should be quoted.
+  - `lyrics.status`: `ok`, `approximate` (low-confidence transcription reported by the API, typically a language Whisper does not support such as Creole, transcribed phonetically), `instrumental`, `no_vocals_detected` or `suspect_repetition` (a short phrase looping, typical of a Whisper hallucination). `lyrics.language` is the language detected by Whisper. Only `ok` lyrics should be quoted.
   - The report header gives `buckets` counts, `estimatedCost`, `scoringVersion`, `elapsedSeconds` and `notes` (tracks over the limit, artists not found...).
 
 ### 5. `lookup_artist_stats`

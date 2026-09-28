@@ -721,7 +721,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
               `Rules:\n` +
               `- Origin column: derive it from ai.flag, never from the raw ai.verdict: "clear" -> Human, "uncertain" -> Inconclusive (confidence %, omitted when 0), "suspected" -> AI suspected (confidence %), "blocked" -> AI confirmed (confidence %, generator), "unchecked" -> Not checked. An AI_GENERATED verdict under 60 % is inconclusive: never write "AI" for it.\n` +
               `- Reason and recommendation fields are codes (e.g. "+listening.high_engagement", "production.clipping", "listen_first_gem"): translate them into plain language, never show them raw.\n` +
-              `- Only quote lyrics whose lyrics.status is "ok". "instrumental", "no_vocals_detected" and "suspect_repetition" mean there is no reliable transcription: say so without quoting.\n` +
+              `- Only quote lyrics whose lyrics.status is "ok". "approximate" means the singing was transcribed with low confidence (typically a language Whisper does not support, such as Creole): write "approximate transcription" and never quote it. "instrumental", "no_vocals_detected" and "suspect_repetition" mean there is no reliable transcription: say so without quoting.\n` +
               `- Unknown Spotify traction is not a weakness: the artist may simply be new.\n` +
               `- The score ranks demos to listen to; it never replaces listening.`
           }

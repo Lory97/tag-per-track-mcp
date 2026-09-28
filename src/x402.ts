@@ -139,6 +139,12 @@ export interface AudioAnalysisResult {
     moods?: Array<{ label: string; score?: number; confidence?: number }> | string[];
     instruments?: Array<{ label: string; score?: number; confidence?: number }> | string[];
     lyrics?: string;
+    /** Returned with lyrics: Whisper language and transcription reliability */
+    lyricsInfo?: {
+        language: string | null;
+        reliability: 'high' | 'approximate' | 'none';
+        avgLogprob: number | null;
+    };
     /** Share of the analyzed window with a detected voice (0-1) */
     voice?: { ratio: number };
     aiDetection?: AiDetectionResult;
