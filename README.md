@@ -4,20 +4,23 @@
 [![npm version](https://img.shields.io/npm/v/tag-per-track-mcp.svg)](https://www.npmjs.com/package/tag-per-track-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-This project is a local **Model Context Protocol (MCP)** server that allows AI agents (like Claude) to analyze audio files via the **Tag-per-Track** API. The server automatically handles the micro-USDC payment process using the **x402** protocol on the **Base** network.
+This project is a local **Model Context Protocol (MCP)** server that allows AI agents (like Claude) to analyze audio files via the **Tag-per-Track** API. It authenticates either with a **Studio API key** (prepaid credits bought on [tag-per-track.cloud](https://tag-per-track.cloud), no crypto needed) or with a wallet, in which case it automatically handles the USDC micro-payment using the **x402** protocol on the **Base** network.
 
 ## 🎯 Vision
 Enable an AI to "pay to listen" autonomously. When an AI agent wants to analyze a track, it uses this MCP server, which signs an EIP-3009 (USDC) payment authorization and instantly retrieves the enriched track metadata.
 
 ## 🚀 Features
-- **`analyze_audio` Tool (Canonical)**: Extracts BPM, Genre, Mood, Key, Instruments, optional Lyrics (0.15 USDC standard / 0.25 USDC with lyrics), AND **AI-Generated Music Detection** (`ai_detection`: Suno, Udio, neural vocoders with `HUMAN`, `AI_GENERATED`, or `UNCERTAIN` verdicts).
-- **`analyze_audio_with_lyrics` Tool (Alias)**: Extracts complete musical metadata, transcribes full vocal lyrics, and returns AI origin integrity metrics (0.25 USDC).
+- **`analyze_audio` Tool (Canonical)**: Extracts BPM, Genre, Mood, Key, Instruments, production metrics, optional Lyrics (1 credit or 0.15 USDC standard / 2 credits or 0.25 USDC with lyrics), **AI-Generated Music Detection** (`ai_detection`: Suno, Udio, neural vocoders with `HUMAN`, `AI_GENERATED`, or `UNCERTAIN` verdicts) and the server-side **A&R evaluation** (`arEvaluation`: discovery / signing / beatmaker profiles).
+- **`analyze_audio_with_lyrics` Tool (Alias)**: Extracts complete musical metadata, transcribes full vocal lyrics, and returns AI origin integrity metrics (2 credits or 0.25 USDC).
 - **`analyze_audio_batch` Tool (Parallel Processing)**: Analyzes multiple music tracks concurrently with AI origin detection on every track, dramatically reducing turnaround time for albums and playlists.
 - **`lookup_artist_stats` Tool (A&R Traction)**: Fetches public Spotify streaming traction (monthly listeners, followers, popularity score, genres) for hybrid A&R qualification.
 - **Selective Audio Compression**: Automatically compresses heavy uncompressed files (`.wav`, `.aiff`, `.aif`) or audio files larger than 15 MB to 128 kbps AAC (`.m4a`) before upload (using native macOS `afconvert` or `ffmpeg`), reducing upload bandwidth and latency by up to 90% while leaving lightweight files (`.mp3`, `.m4a` $\le 15$ MB) untouched.
-- **Automated x402 Payment**: Manages the x402 challenge-response cycle (HTTP 402).
+- **Dual Authentication**: Studio API key (`Authorization: Bearer tpt_live_…`, prepaid credits) takes priority over the Web3 wallet.
+- **Automated x402 Payment**: Manages the x402 challenge-response cycle (HTTP 402), with the platform wallet and USDC contracts pinned client-side.
 - **Integrated Web3**: On-chain signing via `viem` (EIP-3009 TransferWithAuthorization on Base).
 - **Client-Side Financial Guard (Spending Cap)**: Built-in spending limit (default 0.50 USDC max per call) protecting your wallet against abnormal requests.
+- **Confidential by Default for x402**: Wallet-paid analyses are sent with `x-no-persist` (not stored server-side); Studio API key analyses are saved to your dashboard history unless `TAG_PER_TRACK_NO_PERSIST=1`.
+- **Prompts**: `qualify_demo_ar` (single demo A&R qualification) and `batch_demo_screening` (multi-track screening).
 - **Strict File Format Validation**: Rejects non-audio files to protect local privacy and prevent arbitrary file exfiltration.
 - **Deferred Binary Loading & Timeouts**: 15s handshake / 120s processing timeouts with memory-efficient streaming and automatic temp file cleanup.
 - **Compatibility**: Designed for use with Claude Desktop, Cursor, Windsurf, or any MCP client.
@@ -29,8 +32,10 @@ The MCP server supports **Dual Authentication**:
 | Variable | Mode | Description | Default |
 |---|---|---|---|
 | `TAG_PER_TRACK_API_KEY` | **SaaS (Priority 1)** | Studio API Key (`tpt_live_...`) generated on [tag-per-track.cloud](https://tag-per-track.cloud). Consumes prepaid Stripe credits without any crypto wallet. | None |
-| `WALLET_PRIVATE_KEY` / `PRIVATE_KEY` | **Web3 (Priority 2)** | Private key of your Base burner wallet (66 hex chars starting with `0x`) for on-chain USDC micro-payments via x402 v2. | None |
+| `WALLET_PRIVATE_KEY` / `PRIVATE_KEY` / `TAG_PER_TRACK_PRIVATE_KEY` | **Web3 (Priority 2)** | Private key of your Base burner wallet (66 hex chars starting with `0x`) for on-chain USDC micro-payments via x402 v2. | None |
 | `MAX_SPENDING_USDC` | Web3 Safety | Client-side spending cap per request in USDC (default: 0.50). | `0.50` |
+| `PLATFORM_WALLET` | Web3 Safety | Expected payment recipient; any 402 invoice paying elsewhere is rejected. | `0xD33906178569f35EFF2E1665A14b06b455fF531F` |
+| `TAG_PER_TRACK_NO_PERSIST` | SaaS | Set to `1` / `true` to keep API-key analyses out of your dashboard history. | Unset |
 | `API_URL` | Global | Endpoint of the Tag-per-Track analysis API. | `https://api.tag-per-track.cloud/api/analyze` |
 | `API_BASE_URL` | Global | Base endpoint of the Tag-per-Track API for auxiliary routes (e.g. artist stats). | `https://api.tag-per-track.cloud/api` |
 
@@ -100,18 +105,20 @@ Analyzes an audio file to extract musical metadata tags (BPM, key, scale, moods,
   - `filePath` (*string*, optional): Path to a local audio file on disk (`.mp3`, `.wav`, `.ogg`, `.flac`, `.m4a`, `.aac`, `.aiff`). The server validates the format, reads the file and streams it securely.
   - `fileUrl` (*string*, optional): Direct URL of the audio file.
   *(Note: At least one of `filePath` or `fileUrl` must be provided).*
-  - `extractLyrics` (*boolean*, optional): Set to `true` to also extract vocal lyrics (costs 0.25 USDC instead of 0.15 USDC).
+  - `extractLyrics` (*boolean*, optional): Set to `true` to also extract vocal lyrics (2 credits / 0.25 USDC instead of 1 credit / 0.15 USDC).
 
 - **Output Structure**:
   Returns comprehensive metadata including:
   - `bpm`, `key`, `scale`, `genres`, `moods`, `instruments`, `duration`
-  - `ai_detection` / `aiDetection`:
+  - `production` (`lufs`, `peakDb`, `clippedRatio`), `danceability`, `engagement`, `approachability`, `voice.ratio`
+  - `ai_detection` / `aiDetection` (computed on a 12 s core sample):
     - `checked`: boolean (`true` when analyzed)
     - `isAi`: boolean (`true` if detected as synthetic/AI)
     - `confidence`: confidence percentage (`0-100`)
     - `verdict`: `'HUMAN'` | `'AI_GENERATED'` | `'UNCERTAIN'`
-    - `status`: `'ANALYZED'` | `'UNAVAILABLE'`
-    - `sampleDurationSec`: `12` (strict core sample)
+    - `status`: `'SUCCESS'` | `'UNAVAILABLE'` | `'SKIPPED'`
+    - `generator` / `watermarkDetected` (optional): identified generator, e.g. a Suno signature in the file metadata
+  - `arEvaluation` (A&R scoring v2.2): `tier`, `audioType`, `suggestedProfile`, `marketplaceTags`, `aiGate`, `subScores` (production, listening, traction, loyalty) and `profiles.{discovery,signing,beatmaker}` with `score`, `priority` and a `recommendation` code. AI verdicts are graded: ≥ 80 % confidence (or a metadata watermark) blocks the track, 60-79 % flags it, 30-59 % is inconclusive.
 
 ### 2. `analyze_audio_with_lyrics`
 Analyzes an audio file to extract musical metadata, transcribe full vocal lyrics using AI, and evaluate AI Origin Integrity. Supports local audio files and remote URLs.
@@ -131,7 +138,7 @@ Analyzes multiple audio tracks in parallel (batch processing). Vastly reduces to
     - `filePath` (*string*, optional)
     - `fileUrl` (*string*, optional)
     - `extractLyrics` (*boolean*, optional): Per-track lyrics flag.
-  - `extractLyrics` (*boolean*, optional): Global flag to transcribe vocal lyrics for all tracks in this batch (0.25 USDC per track). Default is `false` (0.15 USDC per track).
+  - `extractLyrics` (*boolean*, optional): Global flag to transcribe vocal lyrics for all tracks in this batch (2 credits / 0.25 USDC per track). Default is `false` (1 credit / 0.15 USDC per track).
   - `concurrency` (*number*, optional): Maximum simultaneous parallel requests (1 to 5, default is 4 to respect API rate limits).
 
 - **Output Structure**:
@@ -142,7 +149,7 @@ Analyzes multiple audio tracks in parallel (batch processing). Vastly reduces to
   - `results`: Detailed array containing status (`success` or `error`), metadata (including `ai_detection`), or error reason for each track.
 
 ### 4. `lookup_artist_stats`
-Retrieves streaming traction and commercial metrics for an artist (Spotify monthly listeners, followers, popularity score, genres) for A&R qualification. This service is strictly decoupled from the acoustic analysis pipeline and features a 24-hour in-memory TTL cache with graceful fallback.
+Retrieves streaming traction and commercial metrics for an artist (Spotify monthly listeners, followers, popularity score, genres) for A&R qualification. Free (no credit or payment). This service is strictly decoupled from the acoustic analysis pipeline; the API caches results (7 days persistent, 24 hours in memory) with graceful fallback.
 
 - **Arguments**:
   - `artist_name` (*string*, required): Stage name of the artist (e.g. `"Daft Punk"`, `"Kaytranada"`).
@@ -196,7 +203,7 @@ graph TD
 ```
 
 1. **Step 1 — Acoustic & Origin Analysis:**
-   Invoke `analyze_audio` (or `analyze_audio_with_lyrics` when vocal lyrics transcription is essential) with `filePath` or `fileUrl`. This automatically triggers the x402 micro-payment (0.15 or 0.25 USDC on Base) and evaluates musical attributes alongside AI origin integrity (`ai_detection`).
+   Invoke `analyze_audio` (or `analyze_audio_with_lyrics` when vocal lyrics transcription is essential) with `filePath` or `fileUrl`. This consumes Studio credits (API key mode) or triggers the x402 micro-payment (0.15 or 0.25 USDC on Base), and evaluates musical attributes alongside AI origin integrity (`ai_detection`) and the A&R evaluation (`arEvaluation`).
 2. **Step 2 — Artist Traction Lookup:**
    Whenever the artist's stage name is identifiable (from submission filename, user prompt, or ID3 tags), invoke `lookup_artist_stats(artist_name: "...")`.
 3. **Step 3 — Consolidation into the Unified A&R Evaluation Matrix:**
