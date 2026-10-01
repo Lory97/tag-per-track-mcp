@@ -1,6 +1,7 @@
 {
   "name": "tag-per-track-mcp",
-  "version": "1.6.2",
+  "version": "1.6.3",
+  "mcpName": "io.github.Lory97/tag-per-track-mcp",
   "description": "MCP Server for Tag-per-Track audio analysis with x402 payments",
   "main": "build/index.js",
   "type": "module",

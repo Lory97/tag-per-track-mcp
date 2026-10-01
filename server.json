@@ -1,0 +1,53 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Lory97/tag-per-track-mcp",
+  "title": "Tag-per-Track",
+  "description": "Audio analysis and A&R scoring for music tracks: tags, lyrics, artist stats, demo triage.",
+  "websiteUrl": "https://tag-per-track.cloud",
+  "repository": {
+    "url": "https://github.com/Lory97/tag-per-track-mcp",
+    "source": "github"
+  },
+  "version": "1.6.3",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "tag-per-track-mcp",
+      "version": "1.6.3",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "TAG_PER_TRACK_API_KEY",
+          "description": "Studio API key (tpt_live_...) generated on https://tag-per-track.cloud. Consumes prepaid credits, no crypto wallet needed. Takes priority over the wallet mode.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "WALLET_PRIVATE_KEY",
+          "description": "Private key of a dedicated Base burner wallet (66 hex chars starting with 0x) for USDC micro-payments via x402. Used only when no API key is set.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "MAX_SPENDING_USDC",
+          "description": "Client-side spending cap per request in USDC (wallet mode).",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "0.50"
+        },
+        {
+          "name": "TAG_PER_TRACK_NO_PERSIST",
+          "description": "Set to 1 or true to keep API-key analyses out of your dashboard history.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
